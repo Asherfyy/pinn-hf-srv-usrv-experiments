@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<modelInfo comsolVersion="6.3.0.290" comsolVersionExtension="" modelType="MODEL" nodeType="solved" isRunnable="false" pdfResources="" passwordProtection="off" startMode="edit" ignoreLicenseErrors="off" title="" description="" runtimeProtection="off" windowTitle="1.CIF model(G-W) JS15-7P01" locale="zh_CN" expectedComputationTime="" lastComputationTime="1.372 s" lastComputationDate="2026&#x5e74;7&#x6708;9&#x65e5; &#x4e0b;&#x5348;8:51:57" lastComputationVersion="COMSOL 6.3.0.290" mainPartSDim="None">
+  <historyInfo createdIn="COMSOL Multiphysics 6.3 (&#x5f00;&#x53d1;&#x7248;&#x672c;: 290)" author="" createdDate="1733216102979" lastModifiedBy="" lastModifiedDate="1783601540126"/>
+  <licenseInfo products="OPTIMIZATION"/>
+  <physicsInfo physics="General_optimization##Coefficient_form_PDE"/>
+  <geometryInfo>
+    <geom tag="geom1" dimension="2" hasVirtual="true"/>
+  </geometryInfo>
+  <batchLicInfo batchLic=""/>
+  <appArgumentInfo/>
+</modelInfo>
+

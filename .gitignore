@@ -1,0 +1,61 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.code-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# PINN training outputs
+outputs/
+*/outputs/
+**/outputs/
+
+# Checkpoints and large model artifacts
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# Large numeric arrays and generated data dumps
+*.npy
+*.npz
+*.mat
+*.h5
+*.hdf5
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+*.swp
+*.swo
+
+# Matplotlib / generated figures if created outside outputs
+*.png
+*.jpg
+*.jpeg
+*.tif
+*.tiff
+*.pdf
+
+# Keep source/config files, but avoid accidentally committing local secrets
+.env
+.env.*
+!.env.example

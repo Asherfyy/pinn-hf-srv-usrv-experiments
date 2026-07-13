@@ -1,0 +1,186 @@
+runtime:  # 运行环境设置
+  seed: 2026  # 随机种子
+  device: "cpu"  # 计算设备，本项目固定使用 CPU
+  cpu_threads: 16  # PyTorch CPU 线程数
+  dtype: "float64"  # 张量浮点精度
+
+geometry:  # 几何参数，按 COMSOL 模型“简单方程+复杂边界.mph”同步
+  length_mian_fracture: 180.0  # COMSOL 参数 length_mian_fracture，主裂缝设计长度，单位 m
+  distance_Fracture: 150.0  # COMSOL 参数 distance_Fracture，储层宽度/裂缝间距，单位 m
+  length_reservoir: 360.0  # COMSOL 参数 length_reservoir = length_mian_fracture*2，单位 m
+  widenth_reservoir: 150.0  # COMSOL 参数 widenth_reservoir = distance_Fracture，保留 COMSOL 原拼写，单位 m
+  length_well: 1500.0  # COMSOL 参数 length_well，水平井长度，单位 m
+  thick_reservoir: 8.0  # COMSOL 参数 thick_reservoir，储层厚度，单位 m
+  V: 432000.0  # COMSOL 参数 V = widenth_reservoir*thick_reservoir*length_reservoir，单位 m3
+  number_model: 20.0  # COMSOL 参数 number_model = round(length_well/widenth_reservoir)*2
+  number_HF: 5  # COMSOL 参数 number_HF，次级裂缝条数
+  height_HF: 8.0  # COMSOL 参数 height_HF = thick_reservoir，单位 m
+  wF: 0.01  # COMSOL 参数 wF，裂缝宽度，单位 m
+  Ratio_x: 0.89785  # COMSOL 参数 Ratio_x，主裂缝有效长度比例
+  Ratio_y: 0.77127  # COMSOL 参数 Ratio_y，次级裂缝高度比例
+  x_min: 0.0  # 计算域 x 最小坐标，单位 m
+  x_max: 360.0  # 计算域 x 最大坐标，单位 m
+  y_min: 0.0  # 计算域 y 最小坐标，单位 m
+  y_max: 150.0  # 计算域 y 最大坐标，单位 m
+  srv_x_min: 180.0  # SRV 区域左边界，单位 m
+  srv_x_max: 360.0  # SRV 区域右边界，单位 m
+  srv_y_min: 37.5  # SRV 区域下边界，单位 m
+  srv_y_max: 112.5  # SRV 区域上边界，单位 m
+  main_frac_x_min: 198.387  # 主裂缝左端 x 坐标，单位 m
+  main_frac_x_max: 360.0  # 主裂缝右端 x 坐标，单位 m
+  main_frac_y_min: 74.995  # 主裂缝下边界 y 坐标，单位 m
+  main_frac_y_max: 75.005  # 主裂缝上边界 y 坐标，单位 m
+  secondary_fractures:  # 次级裂缝矩形列表，格式 [x_min, x_max, y_min, y_max]，单位 m
+    - [333.0545, 333.0645, 46.077375, 103.922625]  # 第 1 条次级裂缝
+    - [306.1190, 306.1290, 46.077375, 103.922625]  # 第 2 条次级裂缝
+    - [279.1835, 279.1935, 46.077375, 103.922625]  # 第 3 条次级裂缝
+    - [252.2480, 252.2580, 46.077375, 103.922625]  # 第 4 条次级裂缝
+    - [225.3125, 225.3225, 46.077375, 103.922625]  # 第 5 条次级裂缝
+  dirichlet_mode: "default_segment"  # 生产端 Dirichlet 边界模式
+  dirichlet_adf_type: "tanh"  # Dirichlet 硬约束 ADF 类型；tanh 为局部物理长度快速饱和，legacy_linear 保留旧 d_hat^p 形式
+  dirichlet_adf_length_m: 1.0  # Dirichlet ADF 局部长度尺度，控制网络扰动项从生产边界恢复自由度的速度，单位 m
+  dirichlet_adf_power: 1.0  # Dirichlet ADF 幂次；与 dirichlet_adf_length_m 配合使用，不等同于参考场影响长度
+  hf_distance_smooth_eps_m: 1.0e-4  # HF 距离特征平滑长度，单位 m
+  hf_distance_smooth_beta: 500.0  # HF 多裂缝 smooth-min 锐度
+  dirichlet_segment:  # 生产端固定压力边界线段
+    x0: 360.0  # Dirichlet 线段起点 x 坐标，单位 m
+    y0: 74.995  # Dirichlet 线段起点 y 坐标，单位 m
+    x1: 360.0  # Dirichlet 线段终点 x 坐标，单位 m
+    y1: 75.005  # Dirichlet 线段终点 y 坐标，单位 m
+
+physics:  # PDE 物理系数，参数名与 COMSOL 系数表保持一致
+  use_physical_scaling: true  # 使用 COMSOL 原始 D/Fai，并在代码内转换为显式无量纲 PDE 系数
+  seconds_per_day: 86400.0  # 时间单位换算，1 d = 86400 s
+  pde_time_scale_days: 1.0  # 显式无量纲 PDE 的全局参考时间，单位 d；只缩放残差量级，不改变 PDE 解
+  Fai_HF: 0.1  # COMSOL 参数 Fai_HF，HF 区储容/孔隙度系数
+  Fai_SRV: 0.05  # COMSOL 参数 Fai_SRV，SRV 区储容/孔隙度系数
+  Fai_USRV: 0.05  # COMSOL 参数 Fai_USRV，USRV 区储容/孔隙度系数
+  D1_HF: 1.0  # COMSOL 参数 D1_HF，P1/P12 在 HF 区扩散系数，单位 m2/s
+  D2_HF: 1.0  # COMSOL 参数 D2_HF，P2/P13 在 HF 区扩散系数，单位 m2/s
+  D1_SRV: 1.0e-7  # COMSOL 参数 D1_SRV，P1/P12 在 SRV 区扩散系数，单位 m2/s
+  D2_SRV: 9.95e-8  # COMSOL 参数 D2_SRV = D1_SRV*0.995，单位 m2/s
+  D1_USRV: 1.0e-9  # COMSOL 参数 D1_USRV，P1/P12 在 USRV 区扩散系数，单位 m2/s
+  D2_USRV: 9.9e-10  # COMSOL 参数 D2_USRV = D1_USRV*0.99，单位 m2/s
+  anisotropy_y_1: 1.0  # P1/P12 的 y 向扩散倍率，1 表示各向同性
+  anisotropy_y_2: 1.0  # P2/P13 的 y 向扩散倍率，1 表示各向同性
+
+boundary:  # 边界条件和压力分压参数，名称与 COMSOL 一致
+  R: 8.3145  # COMSOL 参数 R，气体常数，单位 J/(mol*K)
+  Vm: 22.4  # COMSOL 参数 Vm，标准摩尔体积，单位 L/mol
+  M: 16.0  # COMSOL 参数 M，甲烷摩尔质量，单位 g/mol
+  Patm: 0.1  # COMSOL 参数 Patm，标准大气压，单位 MPa
+  rho_water0: 1000.0  # COMSOL 参数 rho_water0，水密度，单位 kg/m3
+  rho_rock: 1600.0  # COMSOL 参数 rho_rock，岩石密度，单位 kg/m3
+  T: 333.15  # COMSOL 参数 T = 60 degC，换算为 K
+  Pb: 3.0  # COMSOL 参数 Pb，生产端总边界压力，单位 MPa
+  Pb1: 2.96765234021  # COMSOL 参数 Pb1 = Pb/(C13_C12+1)，P1/P12 边界分压，单位 MPa
+  Pb2: 0.0323476597911  # COMSOL 参数 Pb2 = Pb*C13_C12/(C13_C12+1)，P2/P13 边界分压，单位 MPa
+  C13_C12: 0.010900084  # COMSOL 参数 C13_C12 = (I0/1000+1)*Rst
+  Rst: 0.0112372  # COMSOL 参数 Rst，标准同位素比值
+  I0: -30.0  # COMSOL 参数 I0，同位素初始偏移
+  P_t0: 25.0  # COMSOL 参数 P_t0，初始总压力，单位 MPa
+  P_out: 3.0  # COMSOL 参数 P_out，长期出口压力，单位 MPa
+  P1_t0: 24.7304361684  # COMSOL 参数 P1_t0 = P_t0/(C13_C12+1)，单位 MPa
+  P2_t0: 0.269563831592  # COMSOL 参数 P2_t0 = P_t0*C13_C12/(C13_C12+1)，单位 MPa
+  an1_decay_rate: 0.018  # COMSOL 函数 an1 的指数衰减系数，时间单位 d
+  pressure_normalization: "component_affine"  # 压力无量纲化模式；默认 P12/P13 分量独立仿射缩放，legacy_shared 仅用于兼容旧实验
+  p_scale_mpa: 22.0  # PINN 内部压力无量纲化尺度，取 P_t0-P_out，单位 MPa
+  dirichlet_influence_length_m: 1.0  # 生产端低压参考场的局部影响长度，单位 m
+  dirichlet_influence_power: 2.0  # 生产端低压参考场的衰减幂次，2 表示平滑高斯型局部影响
+
+initial_condition:  # 初始条件，COMSOL 中所有区域相同
+  P1_t0: 24.7304361684  # P1/P12 初始分压，单位 MPa
+  P2_t0: 0.269563831592  # P2/P13 初始分压，单位 MPa
+
+sampler:  # 训练采样点设置
+  n_pde_hf: 3000  # 每个 epoch 的 HF PDE 点数
+  n_pde_srv: 3000  # 每个 epoch 的 SRV PDE 点数
+  n_pde_usrv: 3000  # 每个 epoch 的 USRV PDE 点数
+  n_initial_hf: 2000  # HF 初始条件点数
+  n_initial_srv: 2000  # SRV 初始条件点数
+  n_initial_usrv: 2000  # USRV 初始条件点数
+  n_dirichlet: 2000  # 生产端 Dirichlet 边界采样点数；dirichlet_hard 用于诊断，direct/ic_hard 用于 soft loss 训练
+  n_neumann: 2000  # 外边界 Neumann 点数
+  n_interface_hf_srv: 3000  # HF-SRV 界面点数
+  n_interface_srv_usrv: 3000  # SRV-USRV 界面点数
+  pde_dirichlet_exclusion_m: 3.0  # PDE 内点避开生产端 Dirichlet ADF 过渡层的物理距离；边界条件仍由 hard constraint/Dirichlet 点负责
+  t_min: 0.0  # 训练时间下限，单位 d
+  t_max: 1000.0  # 训练时间上限，单位 d
+  t_early: 10.0  # 早期加密时间分界，单位 d
+  time_strategy: "log1p_uniform"  # 时间采样策略；默认在 log1p(t) 空间均匀采样，强化 1~100 d 衰减阶段覆盖
+  eps_hf_srv: 0.001  # HF-SRV 界面两侧偏移距离，单位 m
+  eps_srv_usrv: 0.01  # SRV-USRV 界面两侧偏移距离，单位 m
+
+model:  # 神经网络结构设置
+  input_dim: 9  # 网络输入维度，x/y/t 归一化 + 区域 one-hot + 距离特征
+  output_dim: 2  # 网络输出维度，对应 P1/P12 与 P2/P13 的无量纲压力
+  hidden_layers: 6  # 隐藏层数
+  hidden_units: 64  # 每层神经元数
+  activation: "tanh"  # 激活函数
+  constraint_mode: "dirichlet_hard"  # 模型约束模式；可选 dirichlet_hard/direct/ic_hard，默认保持生产边界压力硬约束
+#  constraint_mode = "dirichlet_hard"：u = u_ref(x,y,t) + B_D(x,y)*Nθ，生产边界 P=Pb1/Pb2 被精确满足，适合强调井端压力边界的实验。
+#  constraint_mode = "direct"：u = Nθ，神经网络直接学习无量纲压力场，Dirichlet/初值/无流/界面条件全部作为 soft loss 进入训练。
+#  constraint_mode = "ic_hard"：u = u0(x,y) + t_hat*Nθ，t=0 初始压力被精确满足，生产边界压力通过 Dirichlet soft loss 约束。
+#  direct 模式没有 B_D 的二阶导干扰，形式最简单，但生产边界很窄时需要较大的 dirichlet loss 权重和足够采样点。
+#  ic_hard 模式适合瞬态扩散问题，因为扩散方程本质上是初边值问题，先保证 t=0 全域高压，再让边界低压通过 loss 传播。
+#  dirichlet_hard 模式适合确保生产端压力严格等于 COMSOL 边界函数，但 B_D/ADF 会进入 PDE 求导，可能增加训练难度。
+  hard_constraint_reference: "local_initial"  # 仅在 dirichlet_hard 模式生效；local_initial 表示边界附近低压、远场初始高压
+  detach_distance_features_for_derivatives: true  # PDE/通量求导时固定网络输入距离特征，提升速度并降低二阶导噪声
+#  “距离特征求导”指网络输入中的到 HF/边界距离 d(x,y) 是否参与 du/dx、du/dy、d2u/dx2、d2u/dy2 的链式求导。
+#  若 detach_distance_features_for_derivatives=false，PDE 二阶导会包含距离函数的一阶/二阶导，裂缝角点或界面附近可能产生噪声。
+#  若 detach_distance_features_for_derivatives=true，距离特征仍作为网络输入提供几何信息，但 PDE 求导时把它们视为常数，通常更快更稳。
+
+training:  # 训练超参数
+  epochs: 1000  # Adam 训练轮数
+  learning_rate: 1.0e-3  # Adam 学习率
+  print_every: 100  # 终端打印间隔
+  save_every: 500  # checkpoint 保存间隔
+  use_lbfgs: false  # 是否启用 L-BFGS 精修
+  lbfgs_max_iter: 200  # L-BFGS 最大迭代次数
+  grad_clip_norm: 10.0  # 梯度裁剪阈值
+
+loss_weights:  # 各损失项权重
+  pde: 1.0  # PDE 残差损失权重，残差已无量纲化，使用常规量级
+  initial: 1.0  # 初始条件损失权重
+  dirichlet: 5.0  # 生产边界 Dirichlet soft loss 权重；direct/ic_hard 模式必须依赖它约束 Pb1/Pb2
+  neumann: 5.0  # 外边界无流损失权重
+  interface_pressure: 5  # 界面压力连续损失权重
+  interface_flux: 2  # 界面通量连续损失权重
+  data: 0.0  # 可选 COMSOL 数据监督损失权重
+
+pde_residual_normalization:  # PDE 残差固定尺度归一化，避免 HF/SRV/USRV 系数量级差异主导优化
+  enabled: true  # 是否启用分区域、分变量残差归一化
+  eps: 1.0e-12  # 残差尺度下限，防止所有系数极小时除零
+  component_weights:  # 六个 PDE 分量的独立权重，默认等权进入 loss_pde
+    u12_HF: 1.0
+    u13_HF: 1.0
+    u12_SRV: 1.0
+    u13_SRV: 1.0
+    u12_USRV: 1.0
+    u13_USRV: 1.0
+
+diagnostics:  # 训练诊断开关，默认低频记录以控制 CPU 额外开销
+  enabled: true
+  gradient_norm_every: 100
+  log_pde_component_gradient_norms: true
+
+evaluation:  # 评估与绘图设置
+  grid_nx: 241  # 兼容保留的规则网格 x 点数
+  grid_ny: 121  # 兼容保留的规则网格 y 点数
+  times: [1.0, 10.0, 100.0, 1000.0]  # 输出结果时间点，单位 d
+  adaptive_plot:  # HF/SRV 局部加密绘图点云设置
+    coarse_nx: 181  # 全域粗网格 x 点数
+    coarse_ny: 91  # 全域粗网格 y 点数
+    srv_nx: 361  # SRV 局部网格 x 点数
+    srv_ny: 181  # SRV 局部网格 y 点数
+    hf_long_axis_points: 600  # HF 长轴方向绘图点数
+    hf_short_axis_points: 50  # HF 短轴方向绘图点数
+    hf_padding_m: 0.001  # HF 绘图加密区域外扩距离，单位 m
+
+paths:  # 输入输出路径设置，均相对项目根目录
+  outputs: "outputs"  # 总输出目录
+  checkpoints: "outputs/checkpoints"  # 模型 checkpoint 目录
+  figures: "outputs/figures"  # 图片输出目录
+  logs: "outputs/logs"  # 日志输出目录
+  tables: "outputs/tables"  # 表格输出目录
+  data: "data"  # 输入数据目录

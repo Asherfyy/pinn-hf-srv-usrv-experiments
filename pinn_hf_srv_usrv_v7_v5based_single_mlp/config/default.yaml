@@ -1,0 +1,145 @@
+runtime:  # 运行环境相关设置。
+  seed: 2026  # 随机种子，用于控制 NumPy 和 PyTorch 的随机采样与初始化，便于复现实验。
+  device: "cpu"  # 当前项目强制使用 CPU，避免不同 GPU 环境造成不可复现的数值差异。
+  cpu_threads: 15  # PyTorch 使用的 CPU 线程数，线程数越大通常越快，但过大可能让系统变卡。
+  dtype: "float64"  # 使用双精度浮点数，目的是减轻极端扩散系数差异下的数值噪声。
+
+geometry:  # 储层几何与分区几何设置，单位均为 m。
+  x_min: 0.0  # 全局计算区域左边界 x 坐标。
+  x_max: 360.0  # 全局计算区域右边界 x 坐标，也是生产端所在的 x 位置。
+  y_min: 0.0  # 全局计算区域下边界 y 坐标。
+  y_max: 150.0  # 全局计算区域上边界 y 坐标。
+  srv_x_min: 180.0  # SRV 区域左边界 x 坐标。
+  srv_x_max: 360.0  # SRV 区域右边界 x 坐标。
+  srv_y_min: 37.5  # SRV 区域下边界 y 坐标。
+  srv_y_max: 112.5  # SRV 区域上边界 y 坐标。
+  main_frac_x_min: 198.387  # 主裂缝左端 x 坐标。
+  main_frac_x_max: 360.0  # 主裂缝右端 x 坐标，连接生产端。
+  main_frac_y_min: 74.995  # 主裂缝下边界 y 坐标，裂缝厚度为 0.01 m。
+  main_frac_y_max: 75.005  # 主裂缝上边界 y 坐标，裂缝中心线约为 y=75 m。
+  secondary_fractures:  # 次级细裂缝矩形列表，每一项格式为 [x_min, x_max, y_min, y_max]。
+    - [333.0545, 333.0645, 46.077375, 103.922625]  # 第 1 条次级裂缝，靠近生产端。
+    - [306.1190, 306.1290, 46.077375, 103.922625]  # 第 2 条次级裂缝。
+    - [279.1835, 279.1935, 46.077375, 103.922625]  # 第 3 条次级裂缝。
+    - [252.2480, 252.2580, 46.077375, 103.922625]  # 第 4 条次级裂缝。
+    - [225.3125, 225.3225, 46.077375, 103.922625]  # 第 5 条次级裂缝，靠近主裂缝远端。
+  dirichlet_segment:  # 生产端 Dirichlet 压力边界线段。
+    x0: 360.0  # 生产端线段起点 x 坐标。
+    y0: 74.995  # 生产端线段起点 y 坐标。
+    x1: 360.0  # 生产端线段终点 x 坐标。
+    y1: 75.005  # 生产端线段终点 y 坐标。
+
+physics:  # 物理系数设置。
+  mode: "effective_diffusion"  # PDE 使用有效扩散形式 K=D/Fai。
+  seconds_per_day: 86400.0  # 天到秒的换算系数，用于时间无量纲化。
+  Fai:  # 各区域孔隙度或等效储集系数。
+    HF: 0.1  # HF 裂缝区 Fai，HF 的有效扩散 K=D/Fai 因此很大。
+    SRV: 0.05  # SRV 区 Fai。
+    USRV: 0.05  # USRV 区 Fai。
+  D1:  # P12 或 u12 对应的扩散系数。
+    HF: 1.0  # HF 中 u12 扩散系数，远大于 SRV/USRV。
+    SRV: 1.0e-7  # SRV 中 u12 扩散系数。
+    USRV: 1.0e-9  # USRV 中 u12 扩散系数。
+  D2:  # P13 或 u13 对应的扩散系数。
+    HF: 1.0  # HF 中 u13 扩散系数。
+    SRV: 9.95e-8  # SRV 中 u13 扩散系数。
+    USRV: 9.9e-10  # USRV 中 u13 扩散系数。
+  anisotropy_y_1: 1.0  # u12 的 y 方向各向异性系数，1 表示 x/y 等效扩散相同。
+  anisotropy_y_2: 1.0  # u13 的 y 方向各向异性系数，1 表示 x/y 等效扩散相同。
+
+boundary:  # 初始压力与生产端压力边界设置。
+  P_t0: 25.0  # 初始总压力，单位 MPa。
+  P_out: 3.0  # 生产端长期目标总压力，单位 MPa。
+  C13_C12: 0.010900084  # P13 与 P12 的组分比例，用于拆分总压力。
+  decay_rate: 0.018  # 生产端压力随时间衰减的指数系数，目标无量纲压力为 exp(-decay_rate*t)。
+  pressure_normalization: "component_affine"  # P12/P13 分别做仿射归一化，使初始值为 1，生产端长期目标接近 0。
+
+sampler:  # 训练采样点数量与采样宽度设置。
+  sampling_mode: "random"  # Sampling mode: random or uniform. In random mode, HF link centerlines are still uniform.
+  n_pde_hf: 3000  # HF 区 PDE 残差点数量，采样于所有 HF 裂缝矩形内部。
+  n_pde_srv: 3000  # SRV 区 PDE 残差点数量，采样于 SRV 且排除 HF 的区域。
+  n_pde_usrv: 3000  # USRV 区 PDE 残差点数量，采样于全局区域中不属于 SRV/HF 的区域。
+  n_near_hf_srv: 3000  # HF-SRV 界面附近加密 PDE 点数量，这些点最终并入 SRV PDE 点。
+  hf_srv_band_width_m: 0.15  # HF 外侧加密带宽度，越大则 HF 周围 SRV 过渡区采样越宽。
+  n_near_srv_usrv: 3000  # SRV-USRV 界面附近加密 PDE 点数量，会分配到 SRV 和 USRV 两侧。
+  srv_usrv_band_width_m: 0.75  # SRV-USRV 界面加密带宽度。
+  n_dirichlet: 3000  # 生产端 Dirichlet soft loss 采样点数量。
+  n_neumann: 3000  # 外边界 Neumann 无流边界采样点数量。
+  n_interface_hf_srv: 4000  # HF-SRV 界面连续性 loss 采样点数量。
+  n_interface_srv_usrv: 4000  # SRV-USRV 界面连续性 loss 采样点数量。
+  n_hf_main_link: 3000  # 主裂缝高导流连通 loss 采样点数量，只沿主裂缝中心线采样。
+  n_hf_secondary_link: 3000  # 次级细裂缝快速等压 loss 采样点数量，只沿每条细裂缝中心线采样。
+  n_hf_junction: 2000  # 主裂缝与次级细裂缝交汇处强连通 loss 采样点数量。
+  junction_offset_m: 0.001  # 交汇强连通成对采样的微小偏移距离，用于避开精确重叠点的局部坐标歧义。
+  eps_hf_srv: 0.001  # HF-SRV 界面两侧偏移距离，用于在界面两侧取压力和通量。
+  eps_srv_usrv: 0.05  # SRV-USRV 界面两侧偏移距离，用于在界面两侧取压力和通量。
+  t_min: 0.0  # 训练时间下限，单位 day。
+  t_max: 1000.0  # 训练时间上限，单位 day。
+  time_strategy: "log1p_uniform"  # 时间采样策略，在 log(1+t) 空间均匀采样，以增强早期时间点。
+
+model:  # 单个共享 MLP 网络结构设置。
+  input_dim: 3  # 对外输入维度，固定为 x,y,t 三个物理坐标。
+  network_input_dim: 3  # 单个网络的内部输入特征维度，为 [x_hat,y_hat,t_hat]。
+  output_dim: 2  # 输出维度，对应无量纲压力 u12 和 u13。
+  hidden_layers: 5  # 单个共享 MLP 的隐藏层数。
+  hidden_units: 160  # 单个共享 MLP 每层神经元数；比 v5 单个子网更宽，用于覆盖全域表达。
+  activation: "tanh"  # 激活函数，tanh 对光滑扩散场比较稳定。
+  constraint_mode: "ic_base_correction"  # Use u = u_base + envelope * correction_NN instead of learning the full pressure field.
+  base_checkpoint: null  # Optional checkpoint used as frozen u_base; null means u_base is the initial uniform field.
+  base_time_lag_days: 1.0  # When base_checkpoint is set, evaluate u_base at max(t - this lag, t_min).
+  correction_envelope_power: 1.0  # Power applied to the time envelope multiplying correction_NN.
+
+training:  # 训练超参数设置。
+  epochs: 3000  # 默认目标总训练轮数，继续训练时也是目标总轮数而非额外轮数。
+  learning_rate: 1e-3  # Adam 学习率，过大易振荡，过小收敛慢。
+  fixed_collocation_points: true  # 是否固定同一批 collocation 点训练，true 更便于比较 loss 曲线。
+  resample_every: 300  # 若 fixed_collocation_points=false，则每隔多少轮重新采样一次。
+  grad_clip_norm: 10.0  # 梯度裁剪阈值，用于防止二阶导 loss 导致梯度爆炸。
+  use_lbfgs: false  # 启用 LBFGS，用于从已有 checkpoint 继续做二阶优化微调。
+  lbfgs_lr: 1.0  # LBFGS 步长，配合 strong_wolfe 线搜索使用。
+  lbfgs_max_iter: 20  # 每个外层 epoch 内 LBFGS 最多 closure 迭代次数。
+  lbfgs_max_eval: 25  # 每个外层 epoch 内 LBFGS 最多函数评估次数。
+  lbfgs_history_size: 50  # LBFGS 历史曲率信息长度，越大越占内存。
+  lbfgs_tolerance_grad: 1.0e-9  # LBFGS 梯度收敛阈值。
+  lbfgs_tolerance_change: 1.0e-11  # LBFGS 损失变化收敛阈值。
+  lbfgs_line_search_fn: "strong_wolfe"  # LBFGS 线搜索方式，strong_wolfe 通常更稳。
+  print_every: 50  # 每隔多少轮打印一次训练日志。
+  save_every: 300  # 每隔多少轮保存一次 checkpoint。
+  pressure_range_lower: 0.0  # 压力范围 soft penalty 下限，对应生产端长期无量纲压力附近。
+  pressure_range_upper: 1.05  # 压力范围 soft penalty 上限，略高于初始无量纲压力 1。
+
+loss_weights:  # 各损失项权重设置，调参时主要看这里。
+  pde: 1.0  # PDE 残差 loss 权重，控制各区域满足扩散方程的强度。
+  dirichlet: 20.0  # 生产端 Dirichlet loss 权重，越大越贴近生产端压力目标。
+  neumann: 1  # 外边界 Neumann 无流 loss 权重，过大可能压制内部压力传播。
+  interface_pressure: 50.0  # 分区界面压力连续 loss 权重，越大界面压力跳跃越小。
+  interface_flux: 0.05  # 分区界面通量连续 loss 权重，HF 系数极大时不宜过大。
+  hf_main_link: 8.0  # 主裂缝高导流连通 loss 权重，用于让生产端压力影响整条主裂缝。
+  hf_secondary_link: 6.0  # 次级细裂缝快速等压 loss 权重，用于让每条细裂缝沿长度方向快速同压。
+  hf_junction: 20.0  # 主裂缝和次级细裂缝交汇处强连通 loss 权重，用于压低交汇处压力跳跃。
+  pressure_range: 0.2  # 压力范围 soft penalty 权重，用于抑制负压和过高压力。
+
+evaluation:  # 评估与绘图设置。
+  times: [1.0, 10.0, 100.0, 500.0, 1000.0]  # 输出云图和剖面的时间点，单位 day。
+  adaptive_plot:  # 自适应绘图点云密度设置。
+    coarse_nx: 241  # 全局粗网格 x 方向点数。
+    coarse_ny: 121  # 全局粗网格 y 方向点数。
+    srv_nx: 361  # SRV 区加密网格 x 方向点数。
+    srv_ny: 241  # SRV 区加密网格 y 方向点数。
+    hf_long_axis_points: 800  # HF 裂缝长轴方向绘图点数，用于显示薄裂缝内压力变化。
+    hf_short_axis_points: 21  # HF 裂缝短轴方向绘图点数，用于显示薄裂缝厚度方向。
+    hf_padding_m: 0.1  # HF 绘图加密区域向外扩展距离。
+    transition_band_points: 200  # SRV-USRV 过渡带绘图加密点数。
+  triangulation:  # 云图三角剖分与遮罩设置。
+    mask_cross_region: true  # 是否按区域分别三角剖分，避免跨区域插值造成假连续。
+    max_edge_length_global_m: 5.0  # USRV/全局三角形最大边长，超过会被 mask。
+    max_edge_length_srv_m: 2.0  # SRV 三角形最大边长，越小边界更清楚但图更重。
+    max_edge_length_hf_m: 0.5  # HF 三角形最大边长，适配薄裂缝绘图。
+
+paths:  # 输出路径设置，均相对项目根目录。
+  outputs: "outputs"  # 总输出目录。
+  checkpoints: "outputs/checkpoints"  # checkpoint 保存目录。
+  figures: "outputs/figures"  # 图片输出目录。
+  logs: "outputs/logs"  # loss 日志输出目录。
+  tables: "outputs/tables"  # 诊断表和剖面数据输出目录。
+  data: "data"  # 预留数据目录。
