@@ -1,7 +1,7 @@
 runtime:  # 运行环境相关设置。
   seed: 2026  # 随机种子，用于控制 NumPy 和 PyTorch 的随机采样与初始化，便于复现实验。
   device: "cpu"  # 当前项目强制使用 CPU，避免不同 GPU 环境造成不可复现的数值差异。
-  cpu_threads: 15  # PyTorch 使用的 CPU 线程数，线程数越大通常越快，但过大可能让系统变卡。
+  cpu_threads: 18  # PyTorch 使用的 CPU 线程数，线程数越大通常越快，但过大可能让系统变卡。
   dtype: "float64"  # 使用双精度浮点数，目的是减轻极端扩散系数差异下的数值噪声。
 
 geometry:  # 储层几何与分区几何设置，单位均为 m。
@@ -56,7 +56,7 @@ boundary:  # 初始压力与生产端压力边界设置。
 
 sampler:  # 训练采样点数量与采样宽度设置。
   sampling_mode: "random"  # Sampling mode: random or uniform. In random mode, HF link centerlines are still uniform.
-  n_pde_hf: 3000  # HF 区 PDE 残差点数量，采样于所有 HF 裂缝矩形内部。
+  n_pde_hf: 10000  # HF 区 PDE 残差点数量，采样于所有 HF 裂缝矩形内部。
   n_pde_srv: 3000  # SRV 区 PDE 残差点数量，采样于 SRV 且排除 HF 的区域。
   n_pde_usrv: 3000  # USRV 区 PDE 残差点数量，采样于全局区域中不属于 SRV/HF 的区域。
   n_near_hf_srv: 3000  # HF-SRV 界面附近加密 PDE 点数量，这些点最终并入 SRV PDE 点。
@@ -67,17 +67,11 @@ sampler:  # 训练采样点数量与采样宽度设置。
   n_neumann: 3000  # 外边界 Neumann 无流边界采样点数量。
   n_interface_hf_srv: 4000  # HF-SRV 界面连续性 loss 采样点数量。
   n_interface_srv_usrv: 4000  # SRV-USRV 界面连续性 loss 采样点数量。
-  n_hf_main_link: 3000  # 主裂缝高导流连通 loss 采样点数量，只沿主裂缝中心线采样。
-  n_hf_secondary_link: 3000  # 次级细裂缝快速等压 loss 采样点数量，只沿每条细裂缝中心线采样。
-  n_hf_junction: 2000  # 主裂缝与次级细裂缝交汇处强连通 loss 采样点数量。
-  junction_offset_m: 0.001  # 交汇强连通成对采样的微小偏移距离，用于避开精确重叠点的局部坐标歧义。
   eps_hf_srv: 0.001  # HF-SRV 界面两侧偏移距离，用于在界面两侧取压力和通量。
   eps_srv_usrv: 0.05  # SRV-USRV 界面两侧偏移距离，用于在界面两侧取压力和通量。
   t_min: 0.0  # 训练时间下限，单位 day。
   t_max: 1000.0  # 训练时间上限，单位 day。
-  time_strategy: "piecewise_dense_uniform"  # 时间采样策略：0~time_dense_end 加密采样，time_dense_end~t_max 均匀采样。
-  time_dense_end: 450.0  # 早中期加密采样截止时间，单位 day；当前表示 0~450 day 加密。
-  time_dense_fraction: 0.7  # 分配给 0~time_dense_end 的时间采样比例；0.7 表示 70% 时间点落在 0~450 day。
+  time_strategy: "log1p_uniform"  # 时间采样策略，在 log(1+t) 空间均匀采样，以增强早期时间点。
 
 model:  # 分区 MLP 网络结构设置。
   input_dim: 3  # 对外输入维度，固定为 x,y,t 三个物理坐标。
@@ -94,10 +88,7 @@ model:  # 分区 MLP 网络结构设置。
     SRV: 128  # SRV 子网宽度。
     USRV: 128  # USRV 子网宽度。
   activation: "tanh"  # 激活函数，tanh 对光滑扩散场比较稳定。
-  constraint_mode: "ic_base_correction"  # Use u = u_base + envelope * correction_NN instead of learning the full pressure field.
-  base_checkpoint: null  # Optional checkpoint used as frozen u_base; null means u_base is the initial uniform field.
-  base_time_lag_days: 1.0  # When base_checkpoint is set, evaluate u_base at max(t - this lag, t_min).
-  correction_envelope_power: 1.0  # Power applied to the time envelope multiplying correction_NN.
+  constraint_mode: "ic_hard"  # 初始条件硬约束模式，使 t=0 时 u12/u13 严格等于 1。
 
 training:  # 训练超参数设置。
   epochs: 1000  # 默认目标总训练轮数，继续训练时也是目标总轮数而非额外轮数。
@@ -119,18 +110,15 @@ training:  # 训练超参数设置。
   pressure_range_upper: 1.05  # 压力范围 soft penalty 上限，略高于初始无量纲压力 1。
 
 loss_weights:  # 各损失项权重设置，调参时主要看这里。
-  pde: 5.0  # PDE 残差 loss 权重，控制各区域满足扩散方程的强度。
-  dirichlet: 50.0  # 生产端 Dirichlet loss 权重，越大越贴近生产端压力目标。
+  pde: 10.0  # PDE 残差 loss 权重，控制各区域满足扩散方程的强度。
+  dirichlet: 20.0  # 生产端 Dirichlet loss 权重，越大越贴近生产端压力目标。
   neumann: 5  # 外边界 Neumann 无流 loss 权重，过大可能压制内部压力传播。
-  interface_pressure: 10.0  # 分区界面压力连续 loss 权重，越大界面压力跳跃越小。
+  interface_pressure: 5.0  # 分区界面压力连续 loss 权重，越大界面压力跳跃越小。
   interface_flux: 20  # 分区界面通量连续 loss 权重，HF 系数极大时不宜过大。
-  hf_main_link: 2  # 主裂缝高导流连通 loss 权重，用于让生产端压力影响整条主裂缝。
-  hf_secondary_link: 2  # 次级细裂缝快速等压 loss 权重，用于让每条细裂缝沿长度方向快速同压。
-  hf_junction: 5.0  # 主裂缝和次级细裂缝交汇处强连通 loss 权重，用于压低交汇处压力跳跃。
-  pressure_range: 0.1  # 压力范围 soft penalty 权重，用于抑制负压和过高压力。
+  pressure_range: 0.2  # 压力范围 soft penalty 权重，用于抑制负压和过高压力。
 
 evaluation:  # 评估与绘图设置。
-  times: [1.0, 10.0, 100.0, 500.0, 1000.0]  # 输出云图和剖面的时间点，单位 day。
+  times: [1.0, 100.0, 500.0, 1000.0]  # 输出云图和剖面的时间点，单位 day。
   adaptive_plot:  # 自适应绘图点云密度设置。
     coarse_nx: 241  # 全局粗网格 x 方向点数。
     coarse_ny: 121  # 全局粗网格 y 方向点数。

@@ -94,32 +94,13 @@ class ReservoirSampler:
         if t_max <= t_min:
             raise ValueError(f"t_max 必须大于 t_min，当前 {t_max:g} <= {t_min:g}。")
         strategy = str(self.cfg.get("time_strategy", "log1p_uniform")).lower()
-        if strategy == "log1p_uniform":
-            if self.time_sampling_mode == "uniform":
-                s = self._uniform_interval(np.log1p(t_min), np.log1p(t_max), n)
-            else:
-                s = self.rng.uniform(np.log1p(t_min), np.log1p(t_max), size=(n, 1))
-            t = np.expm1(s)
-        elif strategy == "piecewise_dense_uniform":
-            dense_end = float(self.cfg.get("time_dense_end", 450.0))
-            dense_fraction = float(self.cfg.get("time_dense_fraction", 0.7))
-            if not (t_min < dense_end < t_max):
-                raise ValueError(f"time_dense_end must be inside (t_min, t_max), got {dense_end:g}.")
-            if not (0.0 < dense_fraction < 1.0):
-                raise ValueError(f"time_dense_fraction must be inside (0, 1), got {dense_fraction:g}.")
-            n_early = int(round(n * dense_fraction))
-            if n > 1:
-                n_early = min(max(n_early, 1), n - 1)
-            n_late = n - n_early
-            if self.time_sampling_mode == "uniform":
-                early = self._uniform_interval(t_min, dense_end, n_early)
-                late = self._uniform_interval(dense_end, t_max, n_late)
-            else:
-                early = self.rng.uniform(t_min, dense_end, size=(n_early, 1))
-                late = self.rng.uniform(dense_end, t_max, size=(n_late, 1))
-            t = np.vstack([early, late]).astype(np.float64)
+        if strategy != "log1p_uniform":
+            raise ValueError("v3 只实现 log1p_uniform 时间采样。")
+        if self.time_sampling_mode == "uniform":
+            s = self._uniform_interval(np.log1p(t_min), np.log1p(t_max), n)
         else:
-            raise ValueError(f"Unsupported sampler.time_strategy: {strategy!r}.")
+            s = self.rng.uniform(np.log1p(t_min), np.log1p(t_max), size=(n, 1))
+        t = np.expm1(s)
         t = np.clip(t, t_min, t_max).astype(np.float64)
         if not np.all(np.isfinite(t)):
             raise RuntimeError("时间采样出现 NaN 或 Inf。")
@@ -263,87 +244,6 @@ class ReservoirSampler:
         t = self.sample_time(n)
         return {"xyt": self._to_tensor(np.hstack([x, y, t]).astype(np.float64))}
 
-    def sample_hf_secondary_link_points(self) -> dict[str, torch.Tensor]:
-        """Sample secondary-fracture centerline points tied to their main-fracture junction."""
-
-        n = int(self.cfg.get("n_hf_secondary_link", 0))
-        empty = self._to_tensor(np.empty((0, 3), dtype=np.float64))
-        if n <= 0 or not self.geometry.secondary_fractures:
-            return {"xyt": empty, "junction_xyt": empty}
-
-        main = self.geometry.main_frac
-        y_junction = 0.5 * (main.y_min + main.y_max)
-        counts = self._allocate_counts(n, [rect.height for rect in self.geometry.secondary_fractures])
-        xyt_chunks: list[np.ndarray] = []
-        junction_chunks: list[np.ndarray] = []
-        for rect, count in zip(self.geometry.secondary_fractures, counts):
-            if count <= 0:
-                continue
-            x_center = 0.5 * (rect.x_min + rect.x_max)
-            x = np.full((count, 1), x_center, dtype=np.float64)
-            lower_min = rect.y_min
-            lower_max = min(main.y_min, rect.y_max)
-            upper_min = max(main.y_max, rect.y_min)
-            upper_max = rect.y_max
-            y_parts: list[np.ndarray] = []
-            segment_counts = self._allocate_counts(count, [max(lower_max - lower_min, 0.0), max(upper_max - upper_min, 0.0)])
-            if segment_counts[0] > 0:
-                y_parts.append(self._uniform_interval(lower_min, lower_max, segment_counts[0]))
-            if segment_counts[1] > 0:
-                y_parts.append(self._uniform_interval(upper_min, upper_max, segment_counts[1]))
-            y = np.vstack(y_parts) if y_parts else self._uniform_interval(rect.y_min, rect.y_max, count)
-            t = self.sample_time(count)
-            xyt_chunks.append(np.hstack([x, y, t]).astype(np.float64))
-            y_ref = np.full((count, 1), y_junction, dtype=np.float64)
-            junction_chunks.append(np.hstack([x, y_ref, t]).astype(np.float64))
-
-        xyt = np.vstack(xyt_chunks) if xyt_chunks else np.empty((0, 3), dtype=np.float64)
-        junction_xyt = np.vstack(junction_chunks) if junction_chunks else np.empty((0, 3), dtype=np.float64)
-        order = self.rng.permutation(xyt.shape[0]) if self.sampling_mode == "random" else np.arange(xyt.shape[0])
-        return {"xyt": self._to_tensor(xyt[order]), "junction_xyt": self._to_tensor(junction_xyt[order])}
-
-    def sample_hf_junction_pair_points(self) -> dict[str, torch.Tensor]:
-        """Sample paired points around main-secondary intersections for strong pressure coupling."""
-
-        n = int(self.cfg.get("n_hf_junction", 0))
-        empty = self._to_tensor(np.empty((0, 3), dtype=np.float64))
-        if n <= 0 or not self.geometry.secondary_fractures:
-            return {"main_xyt": empty, "secondary_xyt": empty}
-
-        main = self.geometry.main_frac
-        y_center = 0.5 * (main.y_min + main.y_max)
-        half_main_thickness = 0.5 * main.height
-        offset = float(self.cfg.get("junction_offset_m", 1.0e-3))
-        counts = self._allocate_counts(n, [rect.height for rect in self.geometry.secondary_fractures])
-        main_chunks: list[np.ndarray] = []
-        secondary_chunks: list[np.ndarray] = []
-        for rect, count in zip(self.geometry.secondary_fractures, counts):
-            if count <= 0:
-                continue
-            x_center = 0.5 * (rect.x_min + rect.x_max)
-            half_secondary_width = 0.5 * rect.width
-            t = self.sample_time(count)
-
-            if self.sampling_mode == "uniform":
-                idx = np.arange(count, dtype=np.int64).reshape(-1, 1)
-                x_sign = np.where(idx % 2 == 0, -1.0, 1.0).astype(np.float64)
-                y_sign = np.where((idx // 2) % 2 == 0, -1.0, 1.0).astype(np.float64)
-            else:
-                x_sign = self.rng.choice(np.array([-1.0, 1.0], dtype=np.float64), size=(count, 1))
-                y_sign = self.rng.choice(np.array([-1.0, 1.0], dtype=np.float64), size=(count, 1))
-            main_x = x_center + x_sign * (half_secondary_width + offset)
-            main_y = np.full((count, 1), y_center, dtype=np.float64)
-            secondary_x = np.full((count, 1), x_center, dtype=np.float64)
-            secondary_y = y_center + y_sign * (half_main_thickness + offset)
-
-            main_chunks.append(np.hstack([main_x, main_y, t]).astype(np.float64))
-            secondary_chunks.append(np.hstack([secondary_x, secondary_y, t]).astype(np.float64))
-
-        main_xyt = np.vstack(main_chunks) if main_chunks else np.empty((0, 3), dtype=np.float64)
-        secondary_xyt = np.vstack(secondary_chunks) if secondary_chunks else np.empty((0, 3), dtype=np.float64)
-        order = self.rng.permutation(main_xyt.shape[0]) if self.sampling_mode == "random" else np.arange(main_xyt.shape[0])
-        return {"main_xyt": self._to_tensor(main_xyt[order]), "secondary_xyt": self._to_tensor(secondary_xyt[order])}
-
     def _sample_right_neumann_y(self, n: int) -> np.ndarray:
         """右边界采样时排除生产边界小线段及邻域。"""
 
@@ -461,19 +361,6 @@ class ReservoirSampler:
 
         return self._sample_segments(int(self.cfg["n_interface_srv_usrv"]), self.geometry.srv_usrv_interface_segments())
 
-    def sample_hf_main_link_points(self) -> dict[str, torch.Tensor]:
-        """Sample centerline points on the high-conductivity main fracture."""
-
-        n = int(self.cfg.get("n_hf_main_link", 0))
-        if n <= 0:
-            return {"xyt": self._to_tensor(np.empty((0, 3), dtype=np.float64))}
-        rect = self.geometry.main_frac
-        x = self._uniform_interval(rect.x_min, rect.x_max, n)
-        y_center = 0.5 * (rect.y_min + rect.y_max)
-        y = np.full((n, 1), y_center, dtype=np.float64)
-        t = self.sample_time(n)
-        return {"xyt": self._to_tensor(np.hstack([x, y, t]).astype(np.float64))}
-
     def sample_all(self) -> dict[str, Any]:
         """一次性采样全部训练点；默认训练会固定重复使用这套点。"""
 
@@ -483,7 +370,4 @@ class ReservoirSampler:
             "neumann": self.sample_neumann_boundary_points(),
             "interface_hf_srv": self.sample_hf_srv_interface_points(),
             "interface_srv_usrv": self.sample_srv_usrv_interface_points(),
-            "hf_main_link": self.sample_hf_main_link_points(),
-            "hf_secondary_link": self.sample_hf_secondary_link_points(),
-            "hf_junction": self.sample_hf_junction_pair_points(),
         }

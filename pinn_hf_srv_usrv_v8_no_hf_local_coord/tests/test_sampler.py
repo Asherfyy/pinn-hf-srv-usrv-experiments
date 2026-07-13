@@ -26,10 +26,6 @@ def make_sampler(seed: int = 2026, sampling_mode: str = "random") -> tuple[dict,
             "n_neumann": 64,
             "n_interface_hf_srv": 128,
             "n_interface_srv_usrv": 128,
-            "n_hf_main_link": 64,
-            "n_hf_secondary_link": 64,
-            "n_hf_junction": 64,
-            "junction_offset_m": 0.001,
             "sampling_mode": sampling_mode,
         }
     )
@@ -89,61 +85,6 @@ def test_interface_points_have_valid_two_sided_offsets() -> None:
     assert np.all(region_ids(geom, plus) == REGION_USRV)
 
 
-def test_hf_main_link_points_are_on_main_fracture_centerline() -> None:
-    _config, geom, sampler = make_sampler()
-    points = sampler.sample_hf_main_link_points()["xyt"]
-    arr = points.detach().cpu().numpy()
-    y_center = 0.5 * (geom.main_frac.y_min + geom.main_frac.y_max)
-    assert np.all(region_ids(geom, points) == REGION_HF)
-    assert np.all(arr[:, 0] >= geom.main_frac.x_min)
-    assert np.all(arr[:, 0] <= geom.main_frac.x_max)
-    assert np.allclose(arr[:, 1], y_center)
-
-
-def test_hf_main_link_is_uniform_even_in_random_mode() -> None:
-    _config, _geom, sampler = make_sampler(sampling_mode="random")
-    points = sampler.sample_hf_main_link_points()["xyt"].detach().cpu().numpy()
-    x_sorted = np.sort(points[:, 0])
-    dx = np.diff(x_sorted)
-    assert np.allclose(dx, dx[0])
-
-
-def test_hf_secondary_link_points_are_on_secondary_centerlines() -> None:
-    _config, geom, sampler = make_sampler()
-    samples = sampler.sample_hf_secondary_link_points()
-    points = samples["xyt"]
-    junction = samples["junction_xyt"]
-    arr = points.detach().cpu().numpy()
-    junction_arr = junction.detach().cpu().numpy()
-    secondary_centers = np.array([0.5 * (rect.x_min + rect.x_max) for rect in geom.secondary_fractures])
-    y_junction = 0.5 * (geom.main_frac.y_min + geom.main_frac.y_max)
-    assert points.shape == junction.shape
-    assert np.all(region_ids(geom, points) == REGION_HF)
-    assert np.all(region_ids(geom, junction) == REGION_HF)
-    assert np.all(np.any(np.isclose(arr[:, 0:1], secondary_centers.reshape(1, -1)), axis=1))
-    assert not np.any((arr[:, 1] >= geom.main_frac.y_min) & (arr[:, 1] <= geom.main_frac.y_max))
-    assert np.allclose(junction_arr[:, 0], arr[:, 0])
-    assert np.allclose(junction_arr[:, 1], y_junction)
-    assert np.allclose(junction_arr[:, 2], arr[:, 2])
-
-
-def test_hf_junction_pair_points_connect_main_and_secondary_sides() -> None:
-    _config, geom, sampler = make_sampler()
-    samples = sampler.sample_hf_junction_pair_points()
-    main = samples["main_xyt"]
-    secondary = samples["secondary_xyt"]
-    main_arr = main.detach().cpu().numpy()
-    secondary_arr = secondary.detach().cpu().numpy()
-    y_center = 0.5 * (geom.main_frac.y_min + geom.main_frac.y_max)
-    secondary_centers = np.array([0.5 * (rect.x_min + rect.x_max) for rect in geom.secondary_fractures])
-    assert main.shape == secondary.shape
-    assert np.all(region_ids(geom, main) == REGION_HF)
-    assert np.all(region_ids(geom, secondary) == REGION_HF)
-    assert np.allclose(main_arr[:, 1], y_center)
-    assert np.all(np.any(np.isclose(secondary_arr[:, 0:1], secondary_centers.reshape(1, -1)), axis=1))
-    assert np.allclose(main_arr[:, 2], secondary_arr[:, 2])
-
-
 def test_uniform_sampling_mode_is_deterministic_across_seeds() -> None:
     _config_a, _geom_a, sampler_a = make_sampler(seed=123, sampling_mode="uniform")
     _config_b, _geom_b, sampler_b = make_sampler(seed=999, sampling_mode="uniform")
@@ -152,10 +93,11 @@ def test_uniform_sampling_mode_is_deterministic_across_seeds() -> None:
     for region_name in ["hf", "srv", "usrv"]:
         assert torch.allclose(samples_a["pde"][region_name], samples_b["pde"][region_name])
     assert torch.allclose(samples_a["dirichlet"]["xyt"], samples_b["dirichlet"]["xyt"])
-    assert torch.allclose(samples_a["hf_secondary_link"]["xyt"], samples_b["hf_secondary_link"]["xyt"])
+    assert torch.allclose(samples_a["interface_hf_srv"]["xyt"], samples_b["interface_hf_srv"]["xyt"])
+    assert torch.allclose(samples_a["interface_srv_usrv"]["xyt"], samples_b["interface_srv_usrv"]["xyt"])
 
 
-def test_piecewise_dense_time_sampling_bounds_density_and_seed() -> None:
+def test_log1p_time_sampling_bounds_uniformity_and_seed() -> None:
     _config, _geom, sampler_a = make_sampler(seed=123)
     _config_b, _geom_b, sampler_b = make_sampler(seed=123)
     t_a = sampler_a.sample_time(30000)
@@ -164,13 +106,6 @@ def test_piecewise_dense_time_sampling_bounds_density_and_seed() -> None:
     assert np.all(np.isfinite(t_a))
     assert float(t_a.min()) >= 0.0
     assert float(t_a.max()) <= 1000.0
-    early_fraction = float(np.mean(t_a.reshape(-1) <= 450.0))
-    assert abs(early_fraction - 0.7) < 0.03
-
-
-def test_piecewise_dense_time_sampling_uniform_mode_is_segmented() -> None:
-    _config, _geom, sampler = make_sampler(seed=123, sampling_mode="uniform")
-    t = sampler.sample_time(10).reshape(-1)
-    assert np.all(np.diff(t) >= 0.0)
-    assert int(np.sum(t <= 450.0)) == 7
-    assert int(np.sum(t > 450.0)) == 3
+    log_t = np.log1p(t_a.reshape(-1))
+    counts, _ = np.histogram(log_t, bins=10)
+    assert np.max(np.abs(counts - counts.mean())) / counts.mean() < 0.12

@@ -102,6 +102,7 @@ D:\CursorProject
 ├── pinn_hf_srv_usrv_v5_base_correction
 ├── pinn_hf_srv_usrv_v6_mixed_flux
 ├── pinn_hf_srv_usrv_v7_v5based_single_mlp
+├── pinn_hf_srv_usrv_v8_no_hf_local_coord
 ├── mph_extract_simple
 ├── README.md
 └── .gitignore
@@ -135,7 +136,24 @@ tests/                    # 单元测试
 - 实现基本几何、采样、PDE 残差、边界条件和结果生成。
 - 包含初始的诊断、采样可视化和结果后处理脚本。
 
-该版本用于保存最早的建模思路和代码基础。
+当前默认 PINN 设置：
+
+- 网络结构：使用单个全域 MLP，而不是 HF/SRV/USRV 分区子网络。网络输入维度为 `9`，输出维度为 `2`。
+- 输入特征：`[x_hat, y_hat, t_hat]` 三个归一化坐标，加上 HF/SRV/USRV 的三维 one-hot 区域标识，再加上到外边界、HF 裂缝、生产端 Dirichlet 边界的三个距离特征。
+- 输出变量：`u12` 和 `u13`，对应 `P12/P13` 两个压力分量的无量纲压力；后处理时再还原为 MPa，并可相加得到总压力。
+- MLP 参数：默认 `hidden_layers=6`、`hidden_units=64`、激活函数 `tanh`，权重使用 Xavier 初始化。
+- 约束模式：默认 `constraint_mode="dirichlet_hard"`，即采用 `u = u_ref(x,y,t) + B_D(x,y) * N_theta(x,y,t)`。其中 `B_D` 是生产端 Dirichlet 边界的 ADF 距离因子，在生产端边界上为 0，因此生产端压力由结构精确满足。
+- Dirichlet 参考场：默认 `hard_constraint_reference="local_initial"`，生产端附近参考低压边界，远离生产端逐渐回到初始高压场，避免把全域参考场都拉到生产端低压。
+- 初始条件：HF/SRV/USRV 初始压力均来自 `P_t0=25 MPa` 按组分比例拆分出的 `P12/P13`，作为 soft initial loss 参与训练；若切换到 `constraint_mode="ic_hard"`，则初始条件会被硬嵌入。
+- PDE 形式：强形式二阶扩散方程，对 `u12/u13` 分别计算 `u_t`、`u_xx`、`u_yy`。当前默认启用 `use_physical_scaling=true`，把 COMSOL 风格的 `Fai` 与 `D` 系数转换为归一化坐标下的无量纲 PDE 系数。
+- 分区物性：HF、SRV、USRV 分别使用不同孔隙/储集系数和扩散系数。默认 HF 扩散系数为 `1.0 m2/s`，SRV 为 `1e-7` 量级，USRV 为 `1e-9` 量级。
+- 损失函数：总损失包含 PDE 残差、初始条件、生产端 Dirichlet 诊断/soft loss、外边界 Neumann 无流、HF-SRV/SRV-USRV 界面压力连续、界面法向通量连续，以及可选 COMSOL 数据监督项。
+- PDE 残差归一化：默认开启 `pde_residual_normalization.enabled=true`，把 `u12/u13` 在 HF/SRV/USRV 中的六个 PDE 分量分别按固定尺度归一化，避免 HF 极大扩散系数主导优化。
+- 采样方式：每个 epoch 重新随机采样。HF 点直接在主裂缝和 5 条次级裂缝矩形内采样；SRV/USRV 使用拒绝采样；界面点按线段长度采样并在 loss 中沿法向微小偏移到两侧。
+- 时间采样：默认 `time_strategy="log1p_uniform"`，在 `log1p(t)` 空间均匀采样，再映射回 `0~1000 day`，以增强早期和中期压力衰减阶段的覆盖。
+- 训练设置：默认 CPU-only、`float64`、Adam 优化器、`epochs=1000`、`learning_rate=1e-3`、梯度裁剪 `10.0`；LBFGS 接口保留但默认关闭。
+
+该版本用于保存最早的建模思路和代码基础，同时也是后续 v2~v8 改造版本的对照基线。
 
 ### `pinn_hf_srv_usrv_v2`
 
@@ -147,19 +165,40 @@ tests/                    # 单元测试
 - 增加更清晰的训练、评估和绘图入口。
 - 使用更规范的 `src/`、`tests/`、`config/` 结构。
 
-该版本是后续多个实验版本的结构基础之一。
+当前默认 PINN 设置：
+
+- 网络结构：使用单个全域 MLP，不区分 HF/SRV/USRV 子网络。网络输入维度为 `3`，输出维度为 `2`。
+- 输入特征：只输入归一化坐标 `[x_hat, y_hat, t_hat]`。v2 不把区域 one-hot、距离特征、SDF 或 ADF 作为网络输入。
+- 输出变量：输出 `u12` 和 `u13` 两个无量纲压力分量，对应物理压力 `P12/P13`。
+- MLP 参数：默认 `hidden_layers=4`、`hidden_units=128`、激活函数 `tanh`，权重使用 Xavier 初始化。代码还支持 `silu`。
+- 约束模式：v2 只实现 `constraint_mode="ic_hard"`，输出结构为 `u = 1 + t_hat * N_theta(x_hat,y_hat,t_hat)`。因此在 `t=0` 时，两个压力分量严格等于初始无量纲压力 `1`。
+- 生产端边界：生产端 Dirichlet 不是硬约束，而是通过 soft loss 约束，目标值由 `P_t0=25 MPa`、`P_out=3 MPa`、`decay_rate=0.018` 和组分比例 `C13_C12` 给出。
+- PDE 形式：使用有效扩散强形式 `u_t - kappa_x*u_xx - kappa_y*u_yy = 0`。其中 `K=D/Fai`，`kappa_x=K*T/Lx^2`，`kappa_y=alpha_y*K*T/Ly^2`，导数都在归一化坐标上计算。
+- 分区物性：HF、SRV、USRV 分别使用不同 `Fai/D1/D2`。默认 HF 的扩散系数为 `1.0`，SRV 为 `1e-7` 量级，USRV 为 `1e-9` 量级。
+- 损失函数：总损失包含 PDE 残差、生产端 Dirichlet soft loss、外边界 Neumann soft loss、HF-SRV/SRV-USRV 界面压力连续、界面有效扩散通量连续。v2 没有单独 initial loss，因为初始条件已被 `ic_hard` 结构满足。
+- 界面处理：界面点先按几何线段采样，再沿法向偏移到两侧，过滤出真实跨越 HF-SRV 或 SRV-USRV 的点；压力跳跃和通量跳跃都作为 loss。
+- 采样方式：HF/SRV/USRV 分区采样，并额外在 HF-SRV、SRV-USRV 附近加密 PDE 点。默认 `fixed_collocation_points=true`，训练开始时采样一次并复用；若设为 false，则按 `resample_every=500` 重采样。
+- 时间采样：v2 只支持 `time_strategy="log1p_uniform"`，在 `log1p(t)` 空间随机均匀采样，再映射回 `0~1000 day`。
+- 训练设置：默认 CPU-only、`float64`、Adam 优化器、`epochs=3500`、`learning_rate=1e-3`、梯度裁剪 `10.0`。配置里保留 `use_lbfgs` 字段，但当前 v2 训练主流程实际使用 Adam。
+
+该版本是后续多个实验版本的结构基础之一，也可以作为“简化输入、初始条件硬约束、生产端 soft loss”的对照基线。
 
 ### `pinn_hf_srv_usrv_v3_partition_mlp`
 
 分区 MLP 版本。
 
-核心变化：
+当前默认 PINN 设置：
 
-- 为 HF、SRV、USRV 分别建立独立子网络。
-- 每个区域使用自己的 MLP 表达压力场。
-- 保留统一的物理坐标输入，但在模型内部按区域选择子网络。
-- 对 HF 极薄裂缝引入局部坐标处理，避免厚度方向极小尺度导致二阶导异常放大。
-- 增加主裂缝和次级裂缝连通损失，使裂缝内部更接近高导流通道。
+- 网络结构：为 `HF`、`SRV`、`USRV` 分别建立独立子网络，由几何分区决定每个点调用哪个子网。
+- 公共输入：外部仍输入物理坐标 `x,y,t`，模型内部归一化为 `z=[x_hat,y_hat,t_hat]`。
+- 子网输入：默认 `subnet_input_dim=5`，每个子网接收 `[x_local, y_local, x_hat, y_hat, t_hat]`。
+- 子网规模：HF 为 4 层、每层 96；SRV/USRV 为 5 层、每层 128；激活函数 `tanh`，输出 `u12/u13`。
+- 初始条件硬约束：只支持 `constraint_mode="ic_hard"`，输出为 `u = 1 + (1-exp(-decay_rate*t))*N_region`；最后一层零初始化，使训练初始场严格为 `u=1`。
+- HF 极薄裂缝局部坐标：对水平主裂缝保留长度方向 `x_local`，固定厚度方向 `y_local=0.5`；对竖直细裂缝保留长度方向 `y_local`，固定厚度方向 `x_local=0.5`。这等价于让 HF 子网主要沿裂缝中心线方向表达变化，不让 0.01 m 厚度方向通过局部坐标被放大成高频输入。
+- PDE 形式：继续使用有效扩散强形式 `u_t-kappa_x*u_xx-kappa_y*u_yy=0`，按区域和变量计算残差并用固定尺度归一化。
+- 边界和界面：生产端 Dirichlet、外边界 Neumann 仍为 soft loss；HF-SRV/SRV-USRV 使用两侧偏移点施加压力连续和法向通量连续。
+- 裂缝连通增强：新增 `hf_main_link`、`hf_secondary_link`、`hf_junction`。主裂缝中心线被拉向生产端目标压力；细裂缝中心线与其主裂缝交汇点同压；交汇点附近成对采样强制主裂缝和细裂缝连通。
+- 采样和训练：默认随机采样但固定 collocation 点训练；HF 主裂缝和细裂缝 link 点沿中心线均匀采样；默认启用 LBFGS，适合从 checkpoint 继续微调。
 
 该版本主要用于解决一个重要问题：单纯依靠 PDE 残差和生产端边界，生产端压力影响难以稳定传播到整条主裂缝。
 
@@ -248,6 +287,21 @@ u12, u13
 
 该版本用于对照研究：分区网络本身是否有助于压力连续、裂缝连通和训练稳定。如果 v7 明显弱于 v5，说明分区网络对表达复杂多尺度储层具有实际价值；如果 v7 表现接近 v5，则说明当前问题可能更依赖损失设计和采样策略，而不是网络分区。
 
+### `pinn_hf_srv_usrv_v8_no_hf_local_coord`
+
+基于 v3 的 HF 特殊处理反向对照版本。
+
+核心变化：
+
+- 保留 v3 的分区 MLP、几何范围、物理参数、PDE、边界条件和界面连续损失。
+- 删除 v3 中对 HF 极薄裂缝引入的特殊局部坐标处理。
+- 水平主裂缝不再固定 `y_local=0.5`，而是让厚度方向 `y_local` 在 `[0,1]` 内变化。
+- 竖直细裂缝不再固定 `x_local=0.5`，而是让厚度方向 `x_local` 在 `[0,1]` 内变化。
+- HF 子网仍使用 `[x_local, y_local, x_hat, y_hat, t_hat]`，但 `x_local/y_local` 对 HF 来说都是完整矩形局部坐标。
+- 同时删除 `hf_main_link`、`hf_secondary_link`、`hf_junction` 三类 HF 主裂缝/细裂缝连通增强 loss。
+
+该版本用于反向验证 v3 的两个 HF 特殊帮助机制是否必要：厚度方向局部坐标固定，以及主裂缝/细裂缝快速连通增强。需要注意，0.01 m 裂缝厚度会通过局部坐标被直接放大，且没有额外连通 loss 帮助压力沿裂缝传播，因此 v8 主要作为稳定性和压力分布对照实验。
+
 ### `mph_extract_simple`
 
 辅助数据提取项目。
@@ -325,12 +379,14 @@ outputs/tables/            # 诊断表
 - v5：基准场修正版本。
 - v6：混合压力-通量形式版本。
 - v7：单 MLP 对照版本。
+- v8：同时删除 HF 极薄裂缝局部坐标特殊处理和 HF 连通增强的 v3 对照版本。
 
 如果目标是分析“为什么压力分布不合理”，建议对比：
 
 - v3 与 v7：观察分区网络是否关键。
 - v5 与 v3：观察 base-correction 是否改善传播。
 - v6 与 v3：观察避免二阶导后训练稳定性是否改善。
+- v8 与 v3：观察 HF 厚度方向局部坐标固定和 HF 连通增强是否确实改善训练稳定性和压力场合理性。
 
 如果目标是调参，优先检查：
 
