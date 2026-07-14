@@ -30,13 +30,13 @@ def test_model_uses_partitioned_subnets_and_local_features() -> None:
     assert not hasattr(model, "adf_dirichlet_torch")
 
 
-def test_hf_local_features_keep_full_aperture_coordinate() -> None:
+def test_hf_local_features_fix_short_axis_coordinate() -> None:
     config = load_config(Path(__file__).resolve().parents[1] / "config" / "default.yaml")
     dtype = get_torch_dtype(config["runtime"]["dtype"])
     model = PINNModel(config).to(dtype=dtype)
 
-    # Horizontal main fracture: aperture direction is y_local and should no
-    # longer be clamped to 0.5 as in v3.
+    # Horizontal main fracture: aperture direction is y_local and should be
+    # fixed even though physical PDE points still cover the full aperture.
     xyt = torch.tensor(
         [
             [250.0, 74.995, 10.0],
@@ -47,7 +47,7 @@ def test_hf_local_features_keep_full_aperture_coordinate() -> None:
     )
     z = model.normalize_xyt(xyt)
     features = model.features_for_region(z, "HF")
-    assert torch.allclose(features[:, 1], torch.tensor([0.0, 0.5, 1.0], dtype=dtype), atol=1.0e-10)
+    assert torch.allclose(features[:, 1], torch.full((3,), 0.5, dtype=dtype), atol=1.0e-10)
 
     # Vertical secondary fracture: use a point away from y=75.0 because the
     # secondary fracture intersects the horizontal main fracture there, and the
@@ -62,4 +62,4 @@ def test_hf_local_features_keep_full_aperture_coordinate() -> None:
     )
     z_vertical = model.normalize_xyt(xyt_vertical)
     features_vertical = model.features_for_region(z_vertical, "HF")
-    assert torch.allclose(features_vertical[:, 0], torch.tensor([0.0, 0.5, 1.0], dtype=dtype), atol=1.0e-10)
+    assert torch.allclose(features_vertical[:, 0], torch.full((3,), 0.5, dtype=dtype), atol=1.0e-10)

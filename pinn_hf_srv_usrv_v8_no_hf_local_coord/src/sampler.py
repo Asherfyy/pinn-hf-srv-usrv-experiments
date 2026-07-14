@@ -32,15 +32,72 @@ class ReservoirSampler:
         self.device = device
         self.dtype = dtype
         self.rng = np.random.default_rng(int(seed))
-        self.sampling_mode = str(self.cfg.get("sampling_mode", "random")).lower()
-        if self.sampling_mode not in {"random", "uniform"}:
-            raise ValueError(f"sampler.sampling_mode must be 'random' or 'uniform', got {self.sampling_mode!r}.")
-        self.time_sampling_mode = str(self.cfg.get("time_sampling_mode", self.sampling_mode)).lower()
-        if self.time_sampling_mode not in {"random", "uniform"}:
-            raise ValueError(f"sampler.time_sampling_mode must be 'random' or 'uniform', got {self.time_sampling_mode!r}.")
+        aliases = {
+            "lhs": "latin_hypercube",
+            "latin-hypercube": "latin_hypercube",
+        }
+        raw_sampling_mode = str(self.cfg.get("sampling_mode", "random")).lower()
+        self.sampling_mode = aliases.get(raw_sampling_mode, raw_sampling_mode)
+        valid_modes = {"random", "uniform", "latin_hypercube"}
+        if self.sampling_mode not in valid_modes:
+            raise ValueError(
+                "sampler.sampling_mode must be 'random', 'uniform', "
+                f"or 'latin_hypercube', got {self.sampling_mode!r}."
+            )
+        raw_time_mode = str(self.cfg.get("time_sampling_mode", self.sampling_mode)).lower()
+        self.time_sampling_mode = aliases.get(raw_time_mode, raw_time_mode)
+        if self.time_sampling_mode not in valid_modes:
+            raise ValueError(
+                "sampler.time_sampling_mode must be 'random', 'uniform', "
+                f"or 'latin_hypercube', got {self.time_sampling_mode!r}."
+            )
 
     def _to_tensor(self, array: np.ndarray) -> torch.Tensor:
         return tensor_from_numpy(array, self.device, self.dtype)
+
+    def _latin_hypercube_unit(self, n: int, dim: int) -> np.ndarray:
+        """Generate Latin hypercube samples in [0, 1]^dim."""
+
+        if n <= 0:
+            return np.empty((0, dim), dtype=np.float64)
+        if dim <= 0:
+            raise ValueError(f"Latin hypercube dimension must be positive, got {dim}.")
+        strata = np.arange(n, dtype=np.float64).reshape(n, 1)
+        unit = (strata + self.rng.random((n, dim))) / float(n)
+        for axis in range(dim):
+            self.rng.shuffle(unit[:, axis])
+        return unit.astype(np.float64)
+
+    def _latin_hypercube_interval(self, low: float, high: float, n: int) -> np.ndarray:
+        """Generate one-dimensional Latin hypercube samples in [low, high]."""
+
+        if n <= 0:
+            return np.empty((0, 1), dtype=np.float64)
+        unit = self._latin_hypercube_unit(n, dim=1)
+        values = float(low) + unit * (float(high) - float(low))
+        return values.astype(np.float64)
+
+    def _latin_hypercube_rect(self, rect: Rect, n: int) -> np.ndarray:
+        """Generate two-dimensional Latin hypercube samples inside a rectangle."""
+
+        if n <= 0:
+            return np.empty((0, 2), dtype=np.float64)
+        unit = self._latin_hypercube_unit(n, dim=2)
+        x = rect.x_min + unit[:, 0:1] * rect.width
+        y = rect.y_min + unit[:, 1:2] * rect.height
+        return np.hstack([x, y]).astype(np.float64)
+
+    def _sample_interval(self, low: float, high: float, n: int, mode: str | None = None) -> np.ndarray:
+        """Sample a one-dimensional interval with the requested mode."""
+
+        selected_mode = self.sampling_mode if mode is None else str(mode).lower()
+        if selected_mode == "uniform":
+            return self._uniform_interval(low, high, n)
+        if selected_mode == "latin_hypercube":
+            return self._latin_hypercube_interval(low, high, n)
+        if n <= 0:
+            return np.empty((0, 1), dtype=np.float64)
+        return self.rng.uniform(float(low), float(high), size=(n, 1)).astype(np.float64)
 
     @staticmethod
     def _uniform_interval(low: float, high: float, n: int) -> np.ndarray:
@@ -79,11 +136,7 @@ class ReservoirSampler:
         return self._take_evenly(points, n)
 
     def sample_time(self, n: int) -> np.ndarray:
-        """使用 log1p 均匀策略采样时间。
-
-        压力衰减常常集中在早期和中期。如果直接在物理时间上均匀采样，1000 d 区间会
-        把大量点浪费在长期尾部；log1p 空间均匀能同时覆盖 0 附近和 10~100 d 区间。
-        """
+        """在 log(1+t) 空间中进行时间采样。"""
 
         if n <= 0:
             return np.empty((0, 1), dtype=np.float64)
@@ -95,17 +148,14 @@ class ReservoirSampler:
             raise ValueError(f"t_max 必须大于 t_min，当前 {t_max:g} <= {t_min:g}。")
         strategy = str(self.cfg.get("time_strategy", "log1p_uniform")).lower()
         if strategy != "log1p_uniform":
-            raise ValueError("v3 只实现 log1p_uniform 时间采样。")
-        if self.time_sampling_mode == "uniform":
-            s = self._uniform_interval(np.log1p(t_min), np.log1p(t_max), n)
-        else:
-            s = self.rng.uniform(np.log1p(t_min), np.log1p(t_max), size=(n, 1))
-        t = np.expm1(s)
+            raise ValueError("当前仅实现 log1p_uniform 时间变换。")
+        log_min = float(np.log1p(t_min))
+        log_max = float(np.log1p(t_max))
+        log_time = self._sample_interval(log_min, log_max, n, mode=self.time_sampling_mode)
+        t = np.expm1(log_time)
         t = np.clip(t, t_min, t_max).astype(np.float64)
         if not np.all(np.isfinite(t)):
             raise RuntimeError("时间采样出现 NaN 或 Inf。")
-        if self.time_sampling_mode == "random":
-            self.rng.shuffle(t, axis=0)
         return t
 
     def _allocate_counts(self, n: int, weights: list[float]) -> list[int]:
@@ -126,12 +176,14 @@ class ReservoirSampler:
         return counts.tolist()
 
     def _sample_rect_xy(self, rect: Rect, n: int) -> np.ndarray:
-        """在矩形内均匀采样 x/y。"""
+        """在矩形内采样 x/y。"""
 
         if n <= 0:
             return np.empty((0, 2), dtype=np.float64)
         if self.sampling_mode == "uniform":
             return self._uniform_rect_xy(rect, n)
+        if self.sampling_mode == "latin_hypercube":
+            return self._latin_hypercube_rect(rect, n)
         x = self.rng.uniform(rect.x_min, rect.x_max, size=(n, 1))
         y = self.rng.uniform(rect.y_min, rect.y_max, size=(n, 1))
         return np.hstack([x, y]).astype(np.float64)
@@ -147,7 +199,7 @@ class ReservoirSampler:
         return xy[:n]
 
     def _sample_region_xy(self, n: int, rect: Rect, target_region: int) -> np.ndarray:
-        """在背景矩形内拒绝采样指定区域。"""
+        """在背景矩形中采样指定区域。"""
 
         if n <= 0:
             return np.empty((0, 2), dtype=np.float64)
@@ -165,10 +217,14 @@ class ReservoirSampler:
         accepted: list[np.ndarray] = []
         total = 0
         attempts = 0
-        while total < n and attempts < 300:
+        while total < n and attempts < 200:
             attempts += 1
-            batch_n = max(128, (n - total) * 3)
-            xy = self._sample_rect_xy(rect, batch_n)
+            remaining = n - total
+            batch_n = max(512, int(np.ceil(remaining * 1.5)))
+            if self.sampling_mode == "latin_hypercube":
+                xy = self._latin_hypercube_rect(rect, batch_n)
+            else:
+                xy = self._sample_rect_xy(rect, batch_n)
             region = self.geometry.region_id_np(xy[:, 0], xy[:, 1])
             keep = xy[region == target_region]
             if keep.size > 0:
@@ -176,7 +232,9 @@ class ReservoirSampler:
                 total += keep.shape[0]
         if total < n:
             raise RuntimeError(f"区域采样失败，target_region={target_region}, 得到 {total}/{n}。")
-        return np.vstack(accepted)[:n].astype(np.float64)
+        points = np.vstack(accepted)[:n].astype(np.float64)
+        self.rng.shuffle(points, axis=0)
+        return points
 
     def _sample_from_rects_for_region(self, rects: list[Rect], n: int, target_region: int) -> np.ndarray:
         """从多个窄带矩形中采样指定区域点。"""
@@ -237,38 +295,31 @@ class ReservoirSampler:
         n = int(self.cfg["n_dirichlet"])
         seg = self.geometry.dirichlet_segment
         x = np.full((n, 1), float(seg["x0"]), dtype=np.float64)
-        if self.sampling_mode == "uniform":
-            y = self._uniform_interval(float(seg["y0"]), float(seg["y1"]), n)
-        else:
-            y = self.rng.uniform(float(seg["y0"]), float(seg["y1"]), size=(n, 1)).astype(np.float64)
+        y = self._sample_interval(float(seg["y0"]), float(seg["y1"]), n)
         t = self.sample_time(n)
         return {"xyt": self._to_tensor(np.hstack([x, y, t]).astype(np.float64))}
 
     def _sample_right_neumann_y(self, n: int) -> np.ndarray:
-        """右边界采样时排除生产边界小线段及邻域。"""
+        """右边界采样时排除生产端线段及其邻域。"""
 
+        if n <= 0:
+            return np.empty((0, 1), dtype=np.float64)
         seg = self.geometry.dirichlet_segment
         gap = 0.05
         low = float(seg["y0"]) - gap
         high = float(seg["y1"]) + gap
-        if self.sampling_mode == "uniform":
-            d = self.geometry.domain
-            counts = self._allocate_counts(n, [max(low - d.y_min, 0.0), max(d.y_max - high, 0.0)])
-            chunks: list[np.ndarray] = []
-            if counts[0] > 0:
-                chunks.append(self._uniform_interval(d.y_min, low, counts[0]))
-            if counts[1] > 0:
-                chunks.append(self._uniform_interval(high, d.y_max, counts[1]))
-            return np.vstack(chunks)[:n].astype(np.float64)
-        values: list[np.ndarray] = []
-        total = 0
-        while total < n:
-            y = self.rng.uniform(self.geometry.domain.y_min, self.geometry.domain.y_max, size=(max(64, 2 * (n - total)), 1))
-            keep = y[(y[:, 0] < low) | (y[:, 0] > high)]
-            if keep.size > 0:
-                values.append(keep.reshape(-1, 1))
-                total += keep.size
-        return np.vstack(values)[:n].astype(np.float64)
+        domain = self.geometry.domain
+        counts = self._allocate_counts(n, [max(low - domain.y_min, 0.0), max(domain.y_max - high, 0.0)])
+        chunks: list[np.ndarray] = []
+        if counts[0] > 0:
+            chunks.append(self._sample_interval(domain.y_min, low, counts[0]))
+        if counts[1] > 0:
+            chunks.append(self._sample_interval(high, domain.y_max, counts[1]))
+        if not chunks:
+            raise RuntimeError("生产边界排除区覆盖了整个右边界。")
+        values = np.vstack(chunks)[:n].astype(np.float64)
+        self.rng.shuffle(values, axis=0)
+        return values
 
     def sample_neumann_boundary_points(self) -> dict[str, torch.Tensor]:
         """采样外边界无流点；normal 使用归一化坐标方向。"""
@@ -280,10 +331,7 @@ class ReservoirSampler:
         normals: list[np.ndarray] = []
         if counts[0] > 0:
             x = np.full((counts[0], 1), d.x_min)
-            if self.sampling_mode == "uniform":
-                y = self._uniform_interval(d.y_min, d.y_max, counts[0])
-            else:
-                y = self.rng.uniform(d.y_min, d.y_max, size=(counts[0], 1))
+            y = self._sample_interval(d.y_min, d.y_max, counts[0])
             chunks.append(np.hstack([x, y]))
             normals.append(np.tile([[-1.0, 0.0]], (counts[0], 1)))
         if counts[1] > 0:
@@ -292,18 +340,12 @@ class ReservoirSampler:
             chunks.append(np.hstack([x, y]))
             normals.append(np.tile([[1.0, 0.0]], (counts[1], 1)))
         if counts[2] > 0:
-            if self.sampling_mode == "uniform":
-                x = self._uniform_interval(d.x_min, d.x_max, counts[2])
-            else:
-                x = self.rng.uniform(d.x_min, d.x_max, size=(counts[2], 1))
+            x = self._sample_interval(d.x_min, d.x_max, counts[2])
             y = np.full((counts[2], 1), d.y_min)
             chunks.append(np.hstack([x, y]))
             normals.append(np.tile([[0.0, -1.0]], (counts[2], 1)))
         if counts[3] > 0:
-            if self.sampling_mode == "uniform":
-                x = self._uniform_interval(d.x_min, d.x_max, counts[3])
-            else:
-                x = self.rng.uniform(d.x_min, d.x_max, size=(counts[3], 1))
+            x = self._sample_interval(d.x_min, d.x_max, counts[3])
             y = np.full((counts[3], 1), d.y_max)
             chunks.append(np.hstack([x, y]))
             normals.append(np.tile([[0.0, 1.0]], (counts[3], 1)))
@@ -333,10 +375,7 @@ class ReservoirSampler:
         for (p0, p1, normal), count in zip(segments, counts):
             if count <= 0:
                 continue
-            if self.sampling_mode == "uniform":
-                tau = self._uniform_interval(0.0, 1.0, count)
-            else:
-                tau = self.rng.uniform(0.0, 1.0, size=(count, 1))
+            tau = self._sample_interval(0.0, 1.0, count)
             x = p0[0] + tau * (p1[0] - p0[0])
             y = p0[1] + tau * (p1[1] - p0[1])
             xy_chunks.append(np.hstack([x, y]).astype(np.float64))

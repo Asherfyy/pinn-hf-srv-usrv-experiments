@@ -20,7 +20,7 @@ DEFAULT_CHECKPOINT_PATH = PROJECT_ROOT / "outputs" / "checkpoints" / "final.pt"
 IDE_MODE = "all"
 
 # 是否从已有 checkpoint 继续训练；False 表示从头随机初始化训练。
-IDE_RESUME_FROM_CHECKPOINT = False
+IDE_RESUME_FROM_CHECKPOINT = True
 
 # 继续训练使用的 checkpoint；通常用 final.pt，也可以改成 outputs/checkpoints/epoch_3000.pt。
 IDE_RESUME_CHECKPOINT = DEFAULT_CHECKPOINT_PATH

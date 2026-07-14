@@ -27,6 +27,7 @@ def make_sampler(seed: int = 2026, sampling_mode: str = "random") -> tuple[dict,
             "n_interface_hf_srv": 128,
             "n_interface_srv_usrv": 128,
             "sampling_mode": sampling_mode,
+            "time_sampling_mode": sampling_mode,
         }
     )
     geom = ReservoirGeometry(config["geometry"])
@@ -95,6 +96,26 @@ def test_uniform_sampling_mode_is_deterministic_across_seeds() -> None:
     assert torch.allclose(samples_a["dirichlet"]["xyt"], samples_b["dirichlet"]["xyt"])
     assert torch.allclose(samples_a["interface_hf_srv"]["xyt"], samples_b["interface_hf_srv"]["xyt"])
     assert torch.allclose(samples_a["interface_srv_usrv"]["xyt"], samples_b["interface_srv_usrv"]["xyt"])
+
+
+def test_latin_hypercube_sampling_changes_between_calls() -> None:
+    _config, _geom, sampler = make_sampler(seed=123, sampling_mode="latin_hypercube")
+    samples_a = sampler.sample_all()
+    samples_b = sampler.sample_all()
+    assert not torch.allclose(samples_a["pde"]["hf"], samples_b["pde"]["hf"])
+    assert not torch.allclose(samples_a["pde"]["srv"], samples_b["pde"]["srv"])
+    assert not torch.allclose(samples_a["dirichlet"]["xyt"], samples_b["dirichlet"]["xyt"])
+
+
+def test_latin_hypercube_unit_stratifies_each_dimension() -> None:
+    _config, _geom, sampler = make_sampler(seed=123, sampling_mode="latin_hypercube")
+    unit = sampler._latin_hypercube_unit(128, dim=2)
+    assert unit.shape == (128, 2)
+    assert np.all(unit >= 0.0)
+    assert np.all(unit <= 1.0)
+    for axis in range(2):
+        strata = np.floor(unit[:, axis] * 128).astype(np.int64)
+        assert np.array_equal(np.sort(strata), np.arange(128))
 
 
 def test_log1p_time_sampling_bounds_uniformity_and_seed() -> None:

@@ -6,7 +6,7 @@ import torch
 
 from src.config import load_config
 from src.model import PINNModel
-from src.physics import dimensionless_pde_coefficients, effective_diffusion, pde_residual
+from src.physics import dimensionless_pde_coefficients, effective_diffusion, normal_flux_scale, pde_residual
 from src.utils import get_torch_dtype
 
 
@@ -42,3 +42,20 @@ def test_pde_residual_shapes_and_constant_solution() -> None:
     assert r13.shape == (2, 1)
     assert torch.max(torch.abs(r12)).item() < 1.0e-12
     assert torch.max(torch.abs(r13)).item() < 1.0e-12
+
+
+def test_normal_flux_scale_uses_interface_normal_direction() -> None:
+    config = load_config(Path(__file__).resolve().parents[1] / "config" / "default.yaml")
+    dtype = get_torch_dtype(config["runtime"]["dtype"])
+    coeff = dimensionless_pde_coefficients(config["physics"], config, "u12", "HF", torch.device("cpu"), dtype)
+    normal_x = torch.tensor([[1.0, 0.0], [-1.0, 0.0]], dtype=dtype)
+    normal_y = torch.tensor([[0.0, 1.0], [0.0, -1.0]], dtype=dtype)
+
+    scale_x = normal_flux_scale(config["physics"], config, "u12", "HF", normal_x)
+    scale_y = normal_flux_scale(config["physics"], config, "u12", "HF", normal_y)
+    expected_x = torch.maximum(torch.ones_like(scale_x), torch.abs(coeff["kappa_x"]).expand_as(scale_x))
+    expected_y = torch.maximum(torch.ones_like(scale_y), torch.abs(coeff["kappa_y"]).expand_as(scale_y))
+
+    assert torch.allclose(scale_x, expected_x)
+    assert torch.allclose(scale_y, expected_y)
+    assert torch.all(scale_y > scale_x)

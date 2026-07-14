@@ -51,9 +51,9 @@ class PINNModel(nn.Module):
 
     The public coordinate normalization remains z=[x_hat, y_hat, t_hat].
     Each region subnet receives local geometry-aware features:
-    [x_local, y_local, x_hat, y_hat, t_hat]. In this v8 variant, HF uses the
-    full local rectangle coordinates as-is; the v3 aperture-coordinate clamp is
-    intentionally removed for comparison experiments.
+    [x_local, y_local, x_hat, y_hat, t_hat]. HF PDE points are sampled in the
+    full fracture rectangles, but the thin-aperture local feature is fixed at
+    0.5 to avoid amplifying derivatives across 0.01 m apertures.
     """
 
     REGION_KEY_BY_ID = {
@@ -126,12 +126,20 @@ class PINNModel(nn.Module):
         return (x - rect.x_min) / width, (y - rect.y_min) / height
 
     def _hf_local_xy(self, x: torch.Tensor, y: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Build HF local coordinates with the thin aperture coordinate fixed."""
+
         x_local = torch.zeros_like(x)
         y_local = torch.zeros_like(y)
         assigned = torch.zeros_like(x, dtype=torch.bool)
         for rect in self.geometry.hf_rects:
             mask = self._inside_rect(x, y, rect) & (~assigned)
             rx, ry = self._local_xy(x, y, rect)
+            if rect.width >= rect.height:
+                # Horizontal main fracture: keep length coordinate only.
+                ry = torch.full_like(ry, 0.5)
+            else:
+                # Vertical secondary fracture: keep length coordinate only.
+                rx = torch.full_like(rx, 0.5)
             x_local = torch.where(mask, rx, x_local)
             y_local = torch.where(mask, ry, y_local)
             assigned = assigned | mask

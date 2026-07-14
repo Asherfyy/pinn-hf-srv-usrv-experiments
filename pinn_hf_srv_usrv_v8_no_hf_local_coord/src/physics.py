@@ -73,6 +73,27 @@ def dimensionless_pde_coefficients(
     return {"kappa_x": kx, "kappa_y": ky, "residual_scale": scale}
 
 
+def normal_flux_scale(
+    physics_cfg: dict[str, Any],
+    config: dict[str, Any],
+    variable_name: str,
+    region_name: str,
+    normal: torch.Tensor,
+) -> torch.Tensor:
+    """按界面法向计算通量跳跃归一化尺度。
+
+    对法向通量 `kx*u_x*n_x + ky*u_y*n_y`，尺度应随界面方向变化：
+    竖直界面主要由 kx 控制，水平界面主要由 ky 控制。使用统一
+    `max(1, |kx|, |ky|)` 会在 ky > kx 时低估竖直界面的相对通量误差。
+    """
+
+    coeff = dimensionless_pde_coefficients(physics_cfg, config, variable_name, region_name, normal.device, normal.dtype)
+    nx = normal[:, 0:1]
+    ny = normal[:, 1:2]
+    directional = torch.abs(coeff["kappa_x"] * nx) + torch.abs(coeff["kappa_y"] * ny)
+    return torch.maximum(torch.ones_like(directional), directional)
+
+
 def _region_name_from_id(region_id: int) -> str:
     """把区域编号转换为系数字典使用的区域名。"""
 
@@ -196,7 +217,7 @@ def interface_residual(
     """计算界面压力跳跃和归一化通量跳跃。
 
     返回 pressure_jump、normalized_flux_jump、raw_flux_jump 和有效样本 mask。通量跳跃
-    用两侧最大 residual_scale 归一化，避免 HF 的极大 kappa 直接支配优化。
+    根据界面法向使用 `max(1, |kx*nx| + |ky*ny|)` 归一化，并取两侧材料尺度较大值。
     """
 
     xyt_minus, xyt_plus, normal_valid, mask = interface_offset_points(
@@ -221,10 +242,10 @@ def interface_residual(
     q12_plus, q13_plus = _normal_flux(model, xyt_plus, normal_valid, plus_name, physics_cfg, config)
     raw_flux_jump = torch.cat([q12_minus - q12_plus, q13_minus - q13_plus], dim=1)
 
-    scale12_minus = dimensionless_pde_coefficients(physics_cfg, config, "u12", minus_name, raw_flux_jump.device, raw_flux_jump.dtype)["residual_scale"]
-    scale12_plus = dimensionless_pde_coefficients(physics_cfg, config, "u12", plus_name, raw_flux_jump.device, raw_flux_jump.dtype)["residual_scale"]
-    scale13_minus = dimensionless_pde_coefficients(physics_cfg, config, "u13", minus_name, raw_flux_jump.device, raw_flux_jump.dtype)["residual_scale"]
-    scale13_plus = dimensionless_pde_coefficients(physics_cfg, config, "u13", plus_name, raw_flux_jump.device, raw_flux_jump.dtype)["residual_scale"]
+    scale12_minus = normal_flux_scale(physics_cfg, config, "u12", minus_name, normal_valid)
+    scale12_plus = normal_flux_scale(physics_cfg, config, "u12", plus_name, normal_valid)
+    scale13_minus = normal_flux_scale(physics_cfg, config, "u13", minus_name, normal_valid)
+    scale13_plus = normal_flux_scale(physics_cfg, config, "u13", plus_name, normal_valid)
     scale12 = torch.maximum(scale12_minus, scale12_plus)
     scale13 = torch.maximum(scale13_minus, scale13_plus)
     normalized_flux_jump = torch.cat([raw_flux_jump[:, 0:1] / scale12, raw_flux_jump[:, 1:2] / scale13], dim=1)

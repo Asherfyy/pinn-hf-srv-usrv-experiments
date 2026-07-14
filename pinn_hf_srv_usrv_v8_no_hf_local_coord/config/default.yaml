@@ -55,17 +55,18 @@ boundary:  # 初始压力与生产端压力边界设置。
   pressure_normalization: "component_affine"  # P12/P13 分别做仿射归一化，使初始值为 1，生产端长期目标接近 0。
 
 sampler:  # 训练采样点数量与采样宽度设置。
-  sampling_mode: "random"  # Sampling mode: random or uniform. In random mode, HF link centerlines are still uniform.
-  n_pde_hf: 10000  # HF 区 PDE 残差点数量，采样于所有 HF 裂缝矩形内部。
-  n_pde_srv: 3000  # SRV 区 PDE 残差点数量，采样于 SRV 且排除 HF 的区域。
-  n_pde_usrv: 3000  # USRV 区 PDE 残差点数量，采样于全局区域中不属于 SRV/HF 的区域。
-  n_near_hf_srv: 3000  # HF-SRV 界面附近加密 PDE 点数量，这些点最终并入 SRV PDE 点。
+  sampling_mode: "latin_hypercube"  # HF/SRV/USRV 空间采样使用 Latin hypercube。
+  time_sampling_mode: "latin_hypercube"  # 时间也使用 Latin hypercube，但仍在 log(1+t) 空间进行。
+  n_pde_hf: 6000  # HF 区 PDE 残差点数量，采样于所有 HF 裂缝矩形内部。
+  n_pde_srv: 12000  # SRV 区 PDE 残差点数量，采样于 SRV 且排除 HF 的区域。
+  n_pde_usrv: 6000  # USRV 区 PDE 残差点数量，采样于全局区域中不属于 SRV/HF 的区域。
+  n_near_hf_srv: 0  # 不再额外设置 HF 周围环带 PDE 加密点。
   hf_srv_band_width_m: 0.15  # HF 外侧加密带宽度，越大则 HF 周围 SRV 过渡区采样越宽。
-  n_near_srv_usrv: 3000  # SRV-USRV 界面附近加密 PDE 点数量，会分配到 SRV 和 USRV 两侧。
+  n_near_srv_usrv: 0  # 不再额外设置 SRV-USRV 窄带 PDE 点，界面连续性由 interface 点保证。
   srv_usrv_band_width_m: 0.75  # SRV-USRV 界面加密带宽度。
   n_dirichlet: 3000  # 生产端 Dirichlet soft loss 采样点数量。
   n_neumann: 3000  # 外边界 Neumann 无流边界采样点数量。
-  n_interface_hf_srv: 4000  # HF-SRV 界面连续性 loss 采样点数量。
+  n_interface_hf_srv: 6000  # HF-SRV 界面连续性 loss 采样点数量。
   n_interface_srv_usrv: 4000  # SRV-USRV 界面连续性 loss 采样点数量。
   eps_hf_srv: 0.001  # HF-SRV 界面两侧偏移距离，用于在界面两侧取压力和通量。
   eps_srv_usrv: 0.05  # SRV-USRV 界面两侧偏移距离，用于在界面两侧取压力和通量。
@@ -91,21 +92,21 @@ model:  # 分区 MLP 网络结构设置。
   constraint_mode: "ic_hard"  # 初始条件硬约束模式，使 t=0 时 u12/u13 严格等于 1。
 
 training:  # 训练超参数设置。
-  epochs: 1000  # 默认目标总训练轮数，继续训练时也是目标总轮数而非额外轮数。
-  learning_rate: 7.0e-4  # Adam 学习率，过大易振荡，过小收敛慢。
-  fixed_collocation_points: true  # 是否固定同一批 collocation 点训练，true 更便于比较 loss 曲线。
-  resample_every: 300  # 若 fixed_collocation_points=false，则每隔多少轮重新采样一次。
+  epochs: 6000  # 默认目标总训练轮数，继续训练时也是目标总轮数而非额外轮数。
+  learning_rate: 3.0e-4  # Adam 学习率，LHS 动态重采样下使用较保守学习率。
+  fixed_collocation_points: false  # 不固定使用同一套 collocation 点。
+  resample_every: 100  # 每 100 个 epoch 重新生成一套新的 LHS 点。
   grad_clip_norm: 10.0  # 梯度裁剪阈值，用于防止二阶导 loss 导致梯度爆炸。
   use_lbfgs: false  # 启用 LBFGS，用于从已有 checkpoint 继续做二阶优化微调。
   lbfgs_lr: 1.0  # LBFGS 步长，配合 strong_wolfe 线搜索使用。
-  lbfgs_max_iter: 20  # 每个外层 epoch 内 LBFGS 最多 closure 迭代次数。
-  lbfgs_max_eval: 25  # 每个外层 epoch 内 LBFGS 最多函数评估次数。
+  lbfgs_max_iter: 5  # 每个外层 epoch 内 LBFGS 最多 closure 迭代次数。
+  lbfgs_max_eval: 5  # 每个外层 epoch 内 LBFGS 最多函数评估次数。
   lbfgs_history_size: 50  # LBFGS 历史曲率信息长度，越大越占内存。
   lbfgs_tolerance_grad: 1.0e-9  # LBFGS 梯度收敛阈值。
   lbfgs_tolerance_change: 1.0e-11  # LBFGS 损失变化收敛阈值。
   lbfgs_line_search_fn: "strong_wolfe"  # LBFGS 线搜索方式，strong_wolfe 通常更稳。
   print_every: 50  # 每隔多少轮打印一次训练日志。
-  save_every: 300  # 每隔多少轮保存一次 checkpoint。
+  save_every: 500  # 每隔多少轮保存一次 checkpoint。
   pressure_range_lower: 0.0  # 压力范围 soft penalty 下限，对应生产端长期无量纲压力附近。
   pressure_range_upper: 1.05  # 压力范围 soft penalty 上限，略高于初始无量纲压力 1。
 
@@ -115,7 +116,7 @@ loss_weights:  # 各损失项权重设置，调参时主要看这里。
   neumann: 5  # 外边界 Neumann 无流 loss 权重，过大可能压制内部压力传播。
   interface_pressure: 5.0  # 分区界面压力连续 loss 权重，越大界面压力跳跃越小。
   interface_flux: 20  # 分区界面通量连续 loss 权重，HF 系数极大时不宜过大。
-  pressure_range: 0.2  # 压力范围 soft penalty 权重，用于抑制负压和过高压力。
+  pressure_range: 0.1  # 压力范围 soft penalty 权重，用于抑制负压和过高压力。
 
 evaluation:  # 评估与绘图设置。
   times: [1.0, 100.0, 500.0, 1000.0]  # 输出云图和剖面的时间点，单位 day。
