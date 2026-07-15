@@ -187,7 +187,7 @@ def test_hybrid_time_sampling_keeps_fixed_time_slices() -> None:
     assert np.all(np.isfinite(t))
     assert float(t.min()) >= 0.0
     assert float(t.max()) <= 1000.0
-    assert int(np.isclose(t, 1.0, atol=1.0e-12).sum()) == 1000
-    assert int(np.isclose(t, 100.0, atol=1.0e-12).sum()) == 1000
-    assert int(np.isclose(t, 500.0, atol=1.0e-12).sum()) == 1000
-    assert int(np.isclose(t, 1000.0, atol=1.0e-12).sum()) == 2000
+    assert int(np.isclose(t, 1.0, atol=1.0e-5).sum()) == 1000
+    assert int(np.isclose(t, 100.0, atol=1.0e-5).sum()) == 1000
+    assert int(np.isclose(t, 500.0, atol=1.0e-5).sum()) == 1000
+    assert int(np.isclose(t, 1000.0, atol=1.0e-5).sum()) == 2000

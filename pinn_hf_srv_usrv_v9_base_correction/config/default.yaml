@@ -2,7 +2,7 @@ runtime:  # 运行环境相关设置。
   seed: 2026  # 随机种子，用于控制 NumPy 和 PyTorch 的随机采样与初始化，便于复现实验。
   device: "cpu"  # 当前项目强制使用 CPU，避免不同 GPU 环境造成不可复现的数值差异。
   cpu_threads: 18  # PyTorch 使用的 CPU 线程数，线程数越大通常越快，但过大可能让系统变卡。
-  dtype: "float64"  # 使用双精度浮点数，目的是减轻极端扩散系数差异下的数值噪声。
+  dtype: "float32"  # v9 使用单精度浮点数，便于后续 GPU 加速并降低内存占用。
 
 geometry:  # 储层几何与分区几何设置，单位均为 m。
   x_min: 0.0  # 全局计算区域左边界 x 坐标。
@@ -84,7 +84,7 @@ sampler:  # 训练采样点数量与采样宽度设置。
 
 model:  # 分区 MLP 网络结构设置。
   input_dim: 3  # 对外输入维度，固定为 x,y,t 三个物理坐标。
-  subnet_input_dim: 3  # 每个分区子网的内部特征维度，为 [x_local,y_local,x_hat,y_hat,t_hat]。
+  subnet_input_dim: 3  # 子网输入维度；3 表示 [x_hat,y_hat,t_hat]，5 表示 [x_local,y_local,x_hat,y_hat,t_hat]。
   output_dim: 2  # 输出维度，对应无量纲压力 u12 和 u13。
   hidden_layers: 4  # 默认隐藏层数，若 region_hidden_layers 未覆盖则使用该值。
   hidden_units: 112  # 默认每层神经元数，若 region_hidden_units 未覆盖则使用该值。
@@ -97,7 +97,10 @@ model:  # 分区 MLP 网络结构设置。
     SRV: 128  # SRV 子网宽度。
     USRV: 128  # USRV 子网宽度。
   activation: "tanh"  # 激活函数，tanh 对光滑扩散场比较稳定。
-  constraint_mode: "ic_hard"  # 初始条件硬约束模式，使 t=0 时 u12/u13 严格等于 1。
+  constraint_mode: "ic_base_correction"  # 基准场修正模式：u = u_base + envelope * correction_NN。
+  base_checkpoint: null  # 可选冻结基准模型 checkpoint；null 表示 u_base 为初始均匀压力场 1。
+  base_time_lag_days: 1.0  # 使用基准 checkpoint 时，在 max(t-lag,t_min) 处评价 u_base。
+  correction_envelope_power: 1.0  # 修正项时间包络指数，越大越压制早期修正。
 
 training:  # 训练超参数设置。
   epochs: 1500  # 默认目标总训练轮数，继续训练时也是目标总轮数而非额外轮数。
@@ -105,7 +108,7 @@ training:  # 训练超参数设置。
   fixed_collocation_points: false  # 不固定使用同一套 collocation 点。
   resample_every: 100  # 每 100 个 epoch 重新生成一套新的 LHS 点。
   grad_clip_norm: 10.0  # 梯度裁剪阈值，用于防止二阶导 loss 导致梯度爆炸。
-  use_lbfgs: false  # 启用 LBFGS，用于从已有 checkpoint 继续做二阶优化微调。
+  use_lbfgs: true  # 启用 LBFGS，用于从已有 checkpoint 继续做二阶优化微调。
   lbfgs_lr: 1.0  # LBFGS 步长，配合 strong_wolfe 线搜索使用。
   lbfgs_max_iter: 5  # 每个外层 epoch 内 LBFGS 最多 closure 迭代次数。
   lbfgs_max_eval: 5  # 每个外层 epoch 内 LBFGS 最多函数评估次数。
@@ -119,11 +122,11 @@ training:  # 训练超参数设置。
   pressure_range_upper: 1.05  # 压力范围 soft penalty 上限，略高于初始无量纲压力 1。
 
 loss_weights:  # 各损失项权重设置，调参时主要看这里。
-  pde: 1.0  # PDE 残差 loss 权重，控制各区域满足扩散方程的强度。
-  dirichlet: 100.0  # 生产端 Dirichlet loss 权重，越大越贴近生产端压力目标。
-  neumann: 1  # 外边界 Neumann 无流 loss 权重，过大可能压制内部压力传播。
+  pde: 5.0  # PDE 残差 loss 权重，控制各区域满足扩散方程的强度。
+  dirichlet: 50.0  # 生产端 Dirichlet loss 权重，越大越贴近生产端压力目标。
+  neumann: 2  # 外边界 Neumann 无流 loss 权重，过大可能压制内部压力传播。
   interface_pressure: 10.0  # 分区界面压力连续 loss 权重，越大界面压力跳跃越小。
-  interface_flux: 0.1  # 分区界面通量连续 loss 权重，HF 系数极大时不宜过大。
+  interface_flux: 1  # 分区界面通量连续 loss 权重，HF 系数极大时不宜过大。
   pressure_range: 0.1  # 压力范围 soft penalty 权重，用于抑制负压和过高压力。
 
 evaluation:  # 评估与绘图设置。

@@ -18,7 +18,27 @@ def test_model_input_output_and_ic_hard() -> None:
     assert z.shape[1] == 3
     pred = model(xyt)
     assert pred.shape == (2, 2)
-    assert torch.max(torch.abs(pred[0:1] - torch.ones_like(pred[0:1]))).item() < 1.0e-12
+    assert torch.max(torch.abs(pred[0:1] - torch.ones_like(pred[0:1]))).item() < 1.0e-6
+
+
+def test_base_correction_applies_base_field_and_envelope() -> None:
+    config = load_config(Path(__file__).resolve().parents[1] / "config" / "default.yaml")
+    dtype = get_torch_dtype(config["runtime"]["dtype"])
+    model = PINNModel(config).to(dtype=dtype)
+
+    class ConstantBase(torch.nn.Module):
+        def forward_normalized(self, z: torch.Tensor) -> torch.Tensor:
+            return torch.full((z.shape[0], 2), 0.8, dtype=z.dtype, device=z.device)
+
+    model.attach_base_model(ConstantBase().to(dtype=dtype))
+    with torch.no_grad():
+        model.subnets["HF"].net[-1].bias.copy_(torch.tensor([0.25, -0.10], dtype=dtype))
+
+    xyt = torch.tensor([[250.0, 75.0, 10.0]], dtype=dtype)
+    z = model.normalize_xyt(xyt)
+    envelope = model._correction_envelope(z)
+    expected = torch.tensor([[0.8, 0.8]], dtype=dtype) + envelope * torch.tensor([[0.25, -0.10]], dtype=dtype)
+    assert torch.allclose(model(xyt), expected)
 
 
 def test_model_uses_partitioned_subnets_and_local_features() -> None:
@@ -48,7 +68,7 @@ def test_hf_local_features_fix_short_axis_coordinate() -> None:
     )
     z = model.normalize_xyt(xyt)
     features = model.features_for_region(z, "HF")
-    assert torch.allclose(features[:, 1], torch.full((3,), 0.5, dtype=dtype), atol=1.0e-10)
+    assert torch.allclose(features[:, 1], torch.full((3,), 0.5, dtype=dtype), atol=1.0e-6)
 
     # Vertical secondary fracture: use a point away from y=75.0 because the
     # secondary fracture intersects the horizontal main fracture there, and the
@@ -63,4 +83,4 @@ def test_hf_local_features_fix_short_axis_coordinate() -> None:
     )
     z_vertical = model.normalize_xyt(xyt_vertical)
     features_vertical = model.features_for_region(z_vertical, "HF")
-    assert torch.allclose(features_vertical[:, 0], torch.full((3,), 0.5, dtype=dtype), atol=1.0e-10)
+    assert torch.allclose(features_vertical[:, 0], torch.full((3,), 0.5, dtype=dtype), atol=1.0e-6)

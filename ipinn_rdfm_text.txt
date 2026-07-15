@@ -1,0 +1,847 @@
+
+
+--- PAGE 1 ---
+Journal of Computational Physics 520 (2025) 113491
+Available online 10 October 2024
+0021-9991/© 2024 Elsevier Inc. All rights are reserved, including those for text and data mining, AI training, and similar technologies.
+Contentslistsavailableat ScienceDirect
+Journal of Computational Physics
+journal homepage: www.elsevier.com/locate/jcp
+Improved physics-informed neural networks for the reinterpreted 
+discrete fracture model
+ChaoWang a, HuiGuo a,∗,1, XiaYan b,2, Zhang-LeiShi a, YangYang c,∗,3
+a College of Science, China University of Petroleum (East China), Qingdao, Shandong Province, 266580, China
+b School of Petroleum Engineering, China University of Petroleum (East China), Qingdao, Shandong Province, 266580, China
+c Department of Mathematical Sciences, Michigan Technological University, Houghton, MI 49931, USA
+A R T I C L E I N F O A B S T R A C T
+Keywords:
+Improved-physics-informed neural networks
+Reinterpreted discrete fracture model
+Hybrid-dimension
+Fractured porous media
+Bound-preserving
+This paper is the ﬁrst attempt to apply improved-physics-informed neural networks (I-PINNs) to 
+simulate ﬂuid ﬂow in fractured porous media based on the reinterpreted discrete fracture model 
+(RDFM). The RDFM, ﬁrst introduced by Xu and Yang, is a hybrid-dimensional model where Dirac-
+delta functions are used to characterize fractures and superposed with the permeability tensor. In 
+this paper, we apply the physical information neural networks (PINNs) to RDFM. Diﬀerent from 
+the traditional PINNs where the PDE residual was used as the loss function, we adopt the ﬁnite 
+element discretization of RDFM to build the loss function, avoiding the large gradient problem 
+and diﬃculties in automatic diﬀerentiation. This new method is named as the improved PINNs 
+(I-PINNs). Moreover, we combine the RDFM with incompressible miscible displacement in porous 
+media. The bound-preserving technique of the I-PINNs is proposed and applied to the coupled 
+system mentioned above, keeping the numerical concentration to be between 0 and 1. It is worth 
+noting that one of the advantages of I-PINNs compared to PINNs is that it can better capture 
+the pressure gradient at the fractures. Compared with traditional ﬁnite element methods for ﬂow 
+equations, I-PINNs do not request the inversion of the stiﬀness matrix. In addition, diﬀerent from 
+the traditional bound-preserving technique for contaminant transportation, I-PINNs preserve the 
+physical bounds without taking a limited time step. Several numerical experiments are given to 
+verify the feasibility and accuracy of the I-PINNs.
+1. Introduction
+In recent years, the study of ﬂuid ﬂow in fractured porous media has attracted a lot of attention due to the popularity of hydraulic 
+fracturing technology in unconventional reservoir development. However, a variety of factors such as the vast diﬀerence in perme-
+ability between fractures and matrix, the complexity of the fracture network’s geometric shapes, among others, present signiﬁcant 
+diﬃculties and challenges in modeling and simulating the problem. Hence, it is essential to accurately establish a mathematical model 
+of ﬂuid ﬂow in fractured porous media as well as an eﬃcient numerical method.
+* Corresponding authors.
+E-mail addresses:sdugh@163.com(H.Guo),  yyang7@mtu.edu(Y.Yang).
+1 Supported by National Nature Science Foundation of China (12371416, 12131014), Natural Science Foundation of Shandong Province (ZR2021MA001) and 
+Fundamental Research Funds for the Central Universities (22CX03025A).
+2 Supported by the National Natural Science Foundation of China (52474067), the National Key R&D Program of China (2023YFB4104200) and the Youth Innovation 
+and Technology Support Program for Higher Education Institutions of Shandong Province (2022KJ070).
+3 Supported by Simons Foundation 961585.
+https://doi.org/10.1016/j.jcp.2024.113491
+Received 7 April 2024; Received in revised form 4 September 2024; Accepted 5 October 2024
+
+
+--- PAGE 2 ---
+Journal of Computational Physics 520 (2025) 113491
+2
+C .W a n g ,H .G u o ,X .Y a ne ta l .
+For these reasons, in recent decades researchers have developed a number of models depending on the treatment of the fractures, 
+which can be categorized as continuum models and discrete fracture-matrix models. The dual porosity model [1–4]i s a typical 
+continuum media model, which treats the matrix and fracture network as a continuous system with diﬀerent permeabilities, governed 
+by Darcy’s Law. However, it generates certain errors when simulating disconnected fractured media. Due to the aforementioned 
+reasons, researchers have developed a range of discrete fracture-matrix models to accurately describe individual fracture, including: 
+the discrete fracture model (DFM)[5–10], embedded discrete fracture model (EDFM)[11–14], extended ﬁnite element DFM (XFEM-
+DFM)[15–17], and so on.
+The main idea of the DFM is to view the fractures as s-1 dimensional entries on the interface of s-dimensional matrix cells, 
+with the thickness of fractures being the dimensional homogeneity factor. Since the fractures must be located at the edges of the 
+matrix elements, it is diﬃcult to generate high-quality meshes when the fracture network is very complex. Therefore, embedded 
+DFM (EDFM) has emerged as an alternative solution. It successfully avoids the mesh limitation and is widely used in real reservoir 
+problems. Another class of discrete fracture-matrix models is XFEM-DFM. It imposes interface conditions across fractures by enriching 
+the function space in the elements that intersect the fractures.
+In 2020, Xu and Yang [18] proposed a reinterpreted discrete fracture model (RDFM), which uses the Dirac-𝛿 function to char-
+acterize the permeability tensor of fractures and provides a new hybrid-dimensional representation of the permeability tensor. Its 
+advantage lies in avoiding the mesh restrictions imposed by traditional DFM. Additionally, fractures and matrix are coupled in one 
+system, and the computational cost does not increase with the increasing number of fractures. Building on this work, Guo etal.[ 19]
+proposed conservative numerical methods for the RDFM and extended them to the contaminant transportation. Xu et al. [20,21]
+and Fu etal.[ 22,23]used  RDFM to simulate ﬂow in porous media containing both fractures and barriers. After that, Wu etal.[ 24]
+extended this novel model to Darcy-Forchheimer ﬂow in fractured porous media.
+With the explosive growth of computing resources in the past decade, machine learning methods have undergone revolutionary 
+development, such as the deep neural networks (DNNs)[25–27], the convolutional neural networks (CNNs)[28–30]and  the recurrent 
+neural networks (RNNs)[31–33], etc. In recent years, anovel  DNN framework has been developed, called Physics-informed neural 
+networks (PINNs) [34]. This approach was ﬁrst proposed to solve the forward and inverse problems described by the combination 
+of some data and partial diﬀerential equations (PDEs) [35]. It has been utilized to various ﬂuid mechanics[36], elasticity[37]and  
+seepage mechanics problems[38]. Some attractive features of the PINNs are summarized as follows: (a.)Compared  with traditional 
+numerical methods, PINN belongs to the category of meshless methods, so it can easily deal with complex mobile domain problems; 
+(b.) The employment of the PINNs provides closed-form and diﬀerentiable solutions which can be easily used in any subsequent 
+calculation; (c.)Based  on embedded physical laws (basic PDE), PINN can be trained with a small amount of measured data; (d.)The  
+code is easy to implement by using existing open-source deep learning algorithms.
+Though PINN is a powerful tool in solving PDEs, it cannot yield accurate numerical approximations for RDFM, and we will use 
+numerical experiments to demonstrate this. In this paper, we propose the improved-physics-informed neural networks (I-PINNs) 
+framework suitable for RDFM and extend them to contaminant transportation. We have made some signiﬁcant breakthroughs in 
+the above work: (a.) The I-PINNs framework proposed in this paper for solving single-phase ﬂow in fractured porous media takes 
+the coordinates of collection points as input and the pressure ﬁeld as output, establishing a map from coordinates to pressure and 
+possessing good surrogate model characteristics [38]. (b.) When calculating the single-phase ﬂow problem in porous media with 
+fractures, the PINNs’ automatic diﬀerentiation technique is inevitably needed to calculate the pressure gradient at the fractures, and 
+such technique may fail to work[39]. In the I-PINNs’ framework, the ﬁnite element discretization was used to represent the pressure 
+gradient, eliminating the diﬃculties in automatic diﬀerentiation. (c.) We use a ﬁnite element discretization scheme to construct an 
+approximation of the PDE residual loss function, avoiding the penalty terms of adjusting the loss from the boundary loss and the 
+control equation in the traditional PINNs, and improving the eﬃciency [40]. (d.) Physically, the concentration in the contaminant 
+transportation equation is between 0 and 1. Therefore, we propose bound-preserving I-PINNs in our paper. Compared with the 
+traditional bound-preserving techniques, e.g. [41], our technique does not require a limited the time step size 𝑑𝑡, which greatly 
+increases the computational eﬃciency and reduces the computational cost [42].
+The rest of this article is as follows. Section 2 reviews the RDFM for single-phase ﬂow in fractured porous media. Section 3
+describes the I-PINNs framework and applies it to RDFM. In Section 4, we use several numerical experiments to demonstrate the 
+eﬀectiveness and accuracy of the proposed technique. The application in contaminant transportation is shown in Section5. Finally, 
+we make some concluding statements in Section6.
+2. Problem statement
+2.1. Equi-dimensional model for single-phase ﬂow in fractured media
+We consider the steady-state single-phase ﬂow in heterogeneous porous media, which has the domain Ω ⊆𝑅𝑁 and boundary 𝜕Ω. 
+The governing equation of this problem can be expressed as
+−∇ ⋅(𝐊∇𝑝)= 𝑓, 𝑥 ∈Ω, (2.1)
+where 𝐊is the permeability tensor of the porous media and 𝑓 is the source term. For fractured porous media, 𝐊can be divided into
+𝐊=
+{ 𝐊𝑚 𝑥∈Ω𝑚
+𝐊𝑓 𝑥∈Ω𝑓, (2.2)
+
+
+--- PAGE 3 ---
+Journal of Computational Physics 520 (2025) 113491
+3
+C .W a n g ,H .G u o ,X .Y a ne ta l .
+Fig. 1. Fracturedstructure.
+Fig. 2. Fracturedstructureandthecorrespondingcoordinatesystems.
+in which Ω𝑚 and Ω𝑓 represent the domains of porous matrix and fractures, respectively. For the convenience of observation, Fig.1
+shows the model after the thickness of the fracture is magniﬁed.
+The Dirichlet and Neumann boundary conditions are as follows
+𝑝=𝑝𝐷, on Γ𝐷, (2.3)
+(𝐊∇𝑝) ⋅ 𝐧=𝑞𝑁, on Γ𝑁 =𝜕Ω ⧵Γ𝐷, (2.4)
+where 𝐧is the unit outer normal vector of 𝜕Ω.
+It is worth noting that (2.1)–(2.4) can be summarized as the equi-dimensional model for single-phase ﬂow in fractured media, 
+and 𝐊in (2.2)is  the equi-dimensional representation of permeability tensor.
+2.2. Hybrid-dimensional model for single-phase ﬂow in fractured media
+In this section, we review the RDFM proposed by Xu and Yang [18]to  express the permeability 𝐊of fractured porous media as
+𝐊= 𝐊𝑚 +𝜖𝑘𝑓𝛿(𝜂−𝜂0)1(𝜉1 ≤𝜉 ≤𝜉2)𝜈𝜈𝑇 , (2.5)
+where 𝐊𝑚, 𝜖, 𝑘𝑓 are the permeability tensor of matrix, the thickness of the fracture, and the tangential permeability of the fracture, 
+respectively. 1(⋅)the indicator function deﬁned as 1(expr) equals 1 if expr is true while equals 0 otherwise. 𝛿(𝜂 −𝜂0)1(𝜉1 ≤𝜉 ≤𝜉2)
+indicates the location of the fracture. We give the global 𝑥𝑂𝑦and local coordinates systems 𝜂𝑂𝜉 in Fig.2, where 𝝂 and 𝝈 represent 
+the tangential and normal unit vector of fracture 𝑙, respectively. The permeability 𝐊 in the global coordinate system 𝑥𝑂𝑦 can be 
+expressed as
+𝐊= 𝐊𝑚 +𝜖𝑘𝑓𝛿(−sin(𝜃)𝑥+cos(𝜃)𝑦−𝜂0)1(𝜉1 ≤cos(𝜃)𝑥+sin(𝜃)𝑦 ≤𝜉2)𝜈𝜈𝑇 . (2.6)
+For the system containing multiple fractures, we consider the following equation
+𝐊= 𝐊𝑚 +
+𝐿∑
+𝑖=1
+𝜖𝑖𝑘𝑓𝑖𝛿𝑖(⋅)1𝑖(⋅)𝜈𝑖𝜈𝑖
+𝑇 , (2.7)
+
+
+--- PAGE 4 ---
+Journal of Computational Physics 520 (2025) 113491
+4
+C .W a n g ,H .G u o ,X .Y a ne ta l .
+Fig. 3. Schematicdiagramofphysics-informedneuralnetworks(PINNs).
+in which 𝐿 denotes the number of fractures. 𝛿(⋅)1(⋅) is the abbreviated form of the corresponding expressions in (2.5)a n d (2.6). 
+𝜖𝑖, 𝑘𝑓𝑖, 𝜈𝑖 are the thickness, the tangential permeability and the tangential unit vector of the 𝑖th fracture, respectively. Finally, we 
+summarize the hybrid-dimensional model of single-phase ﬂow in fractured porous media as follows
+−∇ ⋅(𝐊∇𝑝)= 𝑓, 𝑥 ∈Ω,
+𝐊= 𝐊𝑚 +
+𝐿∑
+𝑖=1
+𝜖𝑖𝑘𝑓𝑖𝛿𝑖(⋅)1𝑖(⋅)𝜈𝑖𝜈𝑖
+𝑇 ,𝑥 ∈Ω,
+𝑝=𝑝𝐷, on Γ𝐷,
+(𝐊∇𝑝) ⋅ 𝐧=𝑞𝑁, on Γ𝑁.
+(2.8)
+3. Methodology
+3.1. The fully-connected neural network
+We start with a brief review of traditional PINNs. Fig. 3illustrates the architecture of a multi-layer fully-connected operational 
+neural network containing input layers corresponding to inputs 𝑥1 and 𝑥2, a hidden layer of several neurons, and an output layer 
+corresponding to the output 𝑝. The trial solution of the problem can be approximated by trainable parameters such as the weights 𝝎
+and biases 𝒃of the neural structure:
+𝑝=
+𝑀2∑
+𝑗=1
+𝜔(2)
+𝑗 𝜎(𝑧(1)
+𝑗 )+ 𝑏(2),
+𝑧(1)
+𝑗 =
+𝑀1∑
+𝑖=1
+𝜔(1)
+𝑗𝑖 𝜎(𝑧(0)
+𝑖 )+ 𝑏(1)
+𝑗 ,
+𝑧(0)
+𝑖 =𝜔(0)
+𝑖1 𝑥1 +𝜔(0)
+𝑖2 𝑥2 +𝑏(0)
+𝑖 ,
+where 𝑀1 and 𝑀2 are the number of the neuron units in the ﬁrst and second hidden-layers, respectively. 𝜔(0)
+𝑖𝑗 represents the weight 
+from the input unit 𝑥𝑗 to the 𝑖th neuron of the ﬁrst hidden-layer, 𝜔(1)
+𝑗𝑖 denotes the weight from the 𝑖th neuron of the ﬁrst hidden-layer 
+to the 𝑗th neuron of the second hidden-layer, 𝜔(2)
+𝑗 stands for the weight from the 𝑗th neuron of the second hidden-layer to the output 
+layer, 𝑏(0)
+𝑖 , 𝑏(1)
+𝑗 and 𝑏(2) are the neuron biases of the ﬁrst hidden-layer, second hidden-layer and the output layer, respectively. 𝜎(⋅)
+expresses the nonlinear activation function. This can be extended to the case with more hidden layers.
+3.2. Loss function for the PINNs
+In the traditional PINNs, the trainable parameters 𝝎and 𝒃of the network can be “learned” by minimizing a loss function of the 
+following general form:
+
+
+--- PAGE 5 ---
+Journal of Computational Physics 520 (2025) 113491
+5
+C .W a n g ,H .G u o ,X .Y a ne ta l .
+𝐿𝑜𝑠𝑠=𝜆𝑓𝐿𝑜𝑠𝑠𝑓 +𝜆𝑏𝐿𝑜𝑠𝑠𝑏, (3.1)
+where
+𝐿𝑜𝑠𝑠𝑓 = 1
+𝑁𝑓
+𝑁𝑓∑
+𝑖=1
+||𝑙ℎ𝑠𝑖 −𝑓𝑖||
+2 ,
+𝐿𝑜𝑠𝑠𝑏 = 1
+𝑁𝑏
+𝑁𝑏∑
+𝑖=1
+||𝑝𝑖 − ̄𝑝𝑖||
+2 .
+The loss function (3.1)measures  how well the trial solution 𝑝satisﬁes the corresponding PDE and boundary conditions. The goal 
+is to ﬁnd a set of parameters 𝝎and 𝒃such that the loss function (3.1)is  as small as possible. According to the above equation, 𝐿𝑜𝑠𝑠𝑓
+and 𝐿𝑜𝑠𝑠𝑏 are the losses of the PDE and the boundary conditions, 𝑁𝑓, 𝑁𝑏 represent the numbers of nodes that satisfy the PDE and 
+boundary conditions, respectively. 𝜆𝑓 and 𝜆𝑏 are the weights of the losses of the PDE and the boundary conditions, respectively. 
+These weights, which can be deﬁned by the researchers themselves or automatically adjusted by adaptive techniques, play a key role 
+in improving the performance of PINNs. Thus, the original problem can be interpreted as an optimization problem, i.e., the network 
+is trained by various gradient-based optimization techniques using the minimized loss function (3.1).
+3.3. The PINNs for the hybrid-dimensional model for single-phase ﬂow in fractured media
+Based on the ideas in [43], Eq.(2.1)is  transformed into the form of an energy function. Thus, the loss of the control equation in 
+Eq.(3.1)can  be rewritten as
+𝐿𝑜𝑠𝑠𝑓 = ∫
+Ω
+(1
+2 𝐊∇𝑝 ⋅∇𝑝−𝑓𝑝)𝑑𝑥. (3.2)
+For convenience, the ﬂow is driven by boundary conditions rather than source terms, that is, 𝑓 =0. Combining with Eq. (2.7), 
+the above equation can be further expressed as
+𝐿𝑜𝑠𝑠𝑓 = ∫
+Ω
+(1
+2(𝐊𝑚 +𝜖𝑘𝑓𝛿(⋅)1(⋅)𝜈𝜈𝑇)∇𝑝 ⋅∇𝑝)𝑑𝑥 = ∫
+Ω
+1
+2 𝐊𝑚∇𝑝 ⋅∇𝑝𝑑𝑥 + ∫
+Ω
+1
+2𝜖𝑘𝑓𝛿(⋅)1(⋅)𝜈𝜈𝑇∇𝑝 ⋅∇𝑝𝑑𝑥. (3.3)
+According to Lemma 4.1 in [18], we rewrite the integral of the fracture term as the line integral along the fracture. Then, the 
+transformed equation is as follows
+𝐿𝑜𝑠𝑠𝑓 = ∫
+Ω
+1
+2 𝐊𝑚∇𝑝 ⋅∇𝑝𝑑𝑥 +
+𝐿∑
+𝑖=1 ∫
+𝑙𝑖
+1
+2𝜖𝑖𝑘𝑓𝑖
+𝜕𝑝
+𝜕𝜈𝑖
+𝜕𝑝
+𝜕𝜈𝑖
+𝑑𝑠. (3.4)
+Therefore, the problem is converted into estimating the minimum value of the above energy function.
+3.4. Improved-physics-informed neural networks (I-PINNs)
+Based on the idea of PINNs, we develop the I-PINNs framework to simulate the RDFM. In conventional PINNs, the outputs are 
+substituted into the control equations and the residuals are computed by automatic diﬀerentiation (AD). AD is commonly used to 
+train neural networks by calculating the derivative of a function at a point, rather than by analytically deriving an expression for the 
+derivative of the function. We know that high gradients pose a serious challenge to the accuracy of AD, and it has not yet been shown 
+in the literature that the continuity of ﬂuxes between mesh cells of diﬀerent properties can be accurately portrayed using AD.
+In I-PINNs, we ﬁrst discretize the governing equations (2.8)by  FEM. Then the loss function is evaluated based on FEM. By doing 
+so, the PDE residuals in PINNs are approximated by substituting the output of the neural network into the numerical schemes instead 
+of the original PDEs, which avoids automatic diﬀerentiation and thus improves the accuracy.
+In view of the foregoing thoughts, we ﬁrst establish the variational form of the hybrid-dimensional model (2.8): to ﬁnd 𝑝 ∈𝐻1
+𝐷
+such that for all 𝑣 ∈𝐻1
+0 we have
+∫
+Ω
+(𝐊𝑚 +𝜖𝑘𝑓𝛿(⋅)1(⋅)𝜈𝜈𝑇)∇𝑝 ⋅∇𝑣𝑑𝑥𝑑𝑦 = ∫
+Ω
+𝑓𝑣𝑑𝑥𝑑𝑦 + ∫
+Γ𝑁
+𝑞𝑁𝑣𝑑𝑠, (3.5)
+in which 𝐻1
+𝐷 and 𝐻1
+0 denote the variational spaces 𝐻1
+𝐷 ∶={𝑣 ∈𝐻1(Ω) ∶𝑣|Γ𝐷 =𝑝𝐷}and 𝐻1
+0 ∶={𝑣 ∈𝐻1(Ω) ∶𝑣|Γ𝐷 =0}, respectively. 
+The above equation can then be reduced to the following equivalent form
+∫
+Ω
+𝐊𝑚∇𝑝 ⋅∇𝑣𝑑𝑥𝑑𝑦 + ∫
+Ω
+𝜖𝑘𝑓𝛿(⋅)1(⋅)𝜕𝑝
+𝜕𝜈
+𝜕𝑣
+𝜕𝜈𝑑𝑥𝑑𝑦 = ∫
+Ω
+𝑓𝑣𝑑𝑥𝑑𝑦 + ∫
+Γ𝑁
+𝑞𝑁𝑣𝑑𝑠. (3.6)
+By Lemma 4.1 in [18], we rewrite the integral of the fracture term as the line integral along the fracture. Then, the transformed 
+equation is as follows
+
+
+--- PAGE 6 ---
+Journal of Computational Physics 520 (2025) 113491
+6
+C .W a n g ,H .G u o ,X .Y a ne ta l .
+∫
+Ω
+𝐊𝑚∇𝑝 ⋅∇𝑣𝑑𝑥𝑑𝑦 + ∫
+𝑙
+𝜖𝑘𝑓
+𝜕𝑝
+𝜕𝜈
+𝜕𝑣
+𝜕𝜈𝑑𝑠 = ∫
+Ω
+𝑓𝑣𝑑𝑥𝑑𝑦 + ∫
+Γ𝑁
+𝑞𝑁𝑣𝑑𝑠. (3.7)
+It should be noted that the shape of the fracture can be a curve, and the thickness 𝜖 and tangential permeability 𝑘𝑓 are scalars. 
+For a fracture network composed of multiple fractures, the following formula is available
+∫
+Ω
+𝐊𝑚∇𝑝 ⋅∇𝑣𝑑𝑥𝑑𝑦 +
+𝐿∑
+𝑖=1 ∫
+𝑙𝑖
+𝜖𝑖𝑘𝑓𝑖
+𝜕𝑝
+𝜕𝜈𝑖
+𝜕𝑣
+𝜕𝜈𝑖
+𝑑𝑠 = ∫
+Ω
+𝑓𝑣𝑑𝑥𝑑𝑦 + ∫
+Γ𝑁
+𝑞𝑁𝑣𝑑𝑠, (3.8)
+in which 𝐿is the number of the fractures.
+Then the ﬁnite element scheme of the RDFM is constructed by using the tensor product linear functions as the ﬁnite element space 
+for rectangular meshes in the variational form. For triangular meshes, the traditional linear basis can be applied. Thus, we obtain the 
+following linear system
+𝑁∑
+𝑗=1
+⎧
+⎪
+⎨
+⎪⎩
+∫
+Ω
+(𝐊𝑚∇Ψ𝑖) ⋅∇Ψ𝑗𝑑𝑥𝑑𝑦 + ∫
+𝑙
+𝜖𝑘𝑓
+𝜕Ψ𝑖
+𝜕𝜈
+𝜕Ψ𝑗
+𝜕𝜈 𝑑𝑠
+⎫
+⎪
+⎬
+⎪⎭
+𝑝
+𝑗 = ∫
+Ω
+𝑓Ψ𝑖𝑑𝑥𝑑𝑦 + ∫
+Γ𝑁
+𝑞𝑁Ψ𝑖𝑑𝑠,𝑖 =1,2,...,𝑀. (3.9)
+In addition, the Dirichlet boundary condition is
+𝑝𝑗 =𝑝(𝒙𝑗), 𝒙𝑗 ∈Γ𝐷,𝑗 =𝑀 +1,...,𝑁, (3.10)
+where Ψ𝑖 are the basis, 𝑀 is the number of non-Dirichlet vertices and 𝑁 is the total number of mesh vertices.
+Furthermore, the output of the NN is substituted into (3.9)to  approximate the PDE residual which should be minimized. Therefore, 
+mean absolute error (MAE) loss function for the NN is deﬁned as
+𝐿𝑜𝑠𝑠𝑓 = 1
+𝑀
+𝑀∑
+𝑖=1
+||||
+|
+|
+|
+|
+𝑁∑
+𝑗=1
+⎧
+⎪
+⎨
+⎪⎩
+∫
+Ω
+(𝐊𝑚∇Ψ𝑖) ⋅∇Ψ𝑗𝑑𝑥𝑑𝑦 + ∫
+𝑙
+𝜖𝑘𝑓
+𝜕Ψ𝑖
+𝜕𝜈
+𝜕Ψ𝑗
+𝜕𝜈 𝑑𝑠
+⎫
+⎪
+⎬
+⎪⎭
+𝑝
+∗
+𝑗 − ∫
+Ω
+𝑓Ψ𝑖𝑑𝑥𝑑𝑦 − ∫
+Γ𝑁
+𝑞𝑁Ψ𝑖𝑑𝑠
+||||
+|
+|
+|
+|
+,
+(3.11)
+where 𝑝∗
+𝑗 is the 𝑗th element of the NN output. The NN is trained by minimizing MAE to obtain the solution of 𝑝𝑗, 𝑗 =1, 2, ..., 𝑁. Since 
+the boundary conditions are imposed directly in (3.9), 𝐿𝑜𝑠𝑠𝑏 is not used to train the NN, and only 𝐿𝑜𝑠𝑠𝑓 is taken into account in the 
+loss function, i.e. the Dirichlet boundary condition is applied by manually setting the boundary output to 𝑝𝐷. Finally, we illustrate 
+the I-PINNs framework in Fig.4.
+4. Numerical experiments
+In this section, we simulate several benchmark single-phase ﬂow problems in fractured porous media to verify the accuracy and 
+convergence of the I-PINNs. For simplicity, the ﬂow is driven by boundary conditions instead of source term, i.e., 𝑓 =0. In addition, all 
+the numerical experiments are built on the Pytorch deep learning environment with Relu activation function and torch.optim.Adam 
+optimization method[38]. We ran all the examples on computers with i5-13500HX 2.50 GHz CPU, GTX 4060 GPU, 16 GB memory, 
+500 GB hard drive and a Windows 11 operating system. The performance of the I-PINNs was evaluated according to the following 
+deﬁnition of absolute error:
+𝐿error = |||𝑃pred −𝑃ref
+|||, (4.1)
+where 𝑃pred and 𝑃ref denote the numerical and reference solutions, respectively. 𝑃ref is given by using the standard Galerkin ﬁnite 
+element method on a fully resolved rectangular grid (Nx = Ny = 1001). If not otherwise stated, in all the numerical examples, we 
+use 2 hidden layers and 200 neurons per layer.
+Example 4.1 (Veriﬁcation of accuracy). In the ﬁrst example, we verify the accuracy of the proposed method by analyzing a Poisson 
+problem with smooth heterogeneous conductivity. The computational region is a square plate of length 1 (shown in Fig. 5(a)), and 
+the conductivity is 𝑘(𝑥) = exp(−2𝑥). The left and right boundary conditions are 𝑝𝐷 =1 0, 𝑝𝐷 =0, respectively, while the lower and 
+upper boundaries are insulated.
+We use the uniform rectangular meshes (Nx = Ny = 40) to discretize the entire computational domain (as shown in Fig. 5(b)). 
+Fig. 6 clearly shows that FEM, PINN, and I-PINN can all simulate the problem very well. In addition, their results are consistent, 
+verifying the accuracy of our proposed method.
+Example 4.2 (Cross-shaped fractures). In this example, we consider a square structure with a simple cross-shaped fractures. The 
+computational domain is [0,1]×[0 ,1]with cross-shaped fractures [0.25,0.75]×[0 .4995,0.5005]∪[0 .4995,0.5005]×[0 .25,0.75]laying 
+on it. The permeabilities of fractures and matrix are 104 and 1, respectively. The boundary conditions are shown in Fig.7(a).
+
+
+--- PAGE 7 ---
+Journal of Computational Physics 520 (2025) 113491
+7
+C .W a n g ,H .G u o ,X .Y a ne ta l .
+Fig. 4. SchematicdiagramofI-PINNs.
+Fig. 5. Boundaryconditionsandmeshproﬁles.
+We use the uniform rectangular meshes (Nx = Ny = 30) to discretize the entire computational domain (as shown in Fig. 7(b)). 
+We train the network by minimizing the loss function (3.11)a n d iterating for 200000 steps. It can be seen from Fig. 8(a) that 
+the numerical approximation of pressure in the computational domain agrees with the reference solution (Fig. 8(b)) given in [44]. 
+Moreover, we plot the pressure slices along 𝑦 =0 .45 and 𝑥 =0 .3 in Fig. 9. We can see that the results for I-PINNs are consistent 
+with the reference solution. The maximum errors between the I-PINNs and the reference solutions on the two line segments are 
+4.551 ×1 0−2 and 1.198 ×1 0−2, respectively. It should be noted that we tried to modify the neural network structure parameters 
+(such as the number of neurons and the number of layers) and found that these changes had little impact on the calculation results. 
+Furthermore, thechange  of MAE training loss over all epochs is plotted in Fig.10, showing that the lowest loss is around 7.60 ×10−4.
+
+
+--- PAGE 8 ---
+Journal of Computational Physics 520 (2025) 113491
+8
+C .W a n g ,H .G u o ,X .Y a ne ta l .
+Fig. 6. ComparisonofresultsforFEM,PINN,andI-PINNs.
+Fig. 7. Boundaryconditionsandmeshproﬁles.
+Fig. 8. ReferencesolutionaswellasI-PINNsresult.
+To validate the advantages of the novel I-PINNs framework proposed in this paper as well as the fracture model described using 
+the Dirac-𝛿 function. First, the traditional PINNs simulation of an equi-dimensional model of single-phase ﬂow in fractured porous 
+media is considered (see (2.1)–(2.4)). Keeping the computational domain as well as the boundary conditions consistent with the above 
+problem, weuse  the same number of network layers and neurons as before, and iterate 300000 steps. The computational domain is 
+discretized using 1681 uniformly distributed nodes, including 1640 matrix nodes and 41 fracture nodes. The distribution of nodes as 
+well as the computational results are shown in Fig.11(a), and Fig.11(b), respectively. From Fig.11(b), it can be seen that the eﬀect 
+the fracture can hardly be observed, which is due to the fact that conventional PINNs use discrete node information, and a single line 
+does not clearly represent the fracture. To clearly depict the eﬀect of the fractures, more nodes must be assigned along of the fracture 
+(as shown in Fig.11(c)), which increases the computational cost. In fact, we ﬁnd in Fig.11(d) that even with the increased number of 
+
+
+--- PAGE 9 ---
+Journal of Computational Physics 520 (2025) 113491
+9
+C .W a n g ,H .G u o ,X .Y a ne ta l .
+Fig. 9. Pressureproﬁlesalongdiﬀerentlines.
+Fig. 10. TheconvergenceoftheMAElossoverepochs.
+nodes, there is still no signiﬁcant change in the pressure distribution. Further investment is needed to understand why PINNs failed 
+to work for the equi-dimension model.
+To address the above problems, we consider RDFM (see Eq. (2.8)). We simulate the problem using conventional PINNs, treated 
+in a manner consistent with the problem above. Fig.12(a) clearly shows that the model using the Dirac-𝛿function is able to describe 
+the pressure distribution in the fracture, without considering the accuracy. This is due to the fact that although we still use nodal 
+information, the fracture is clearly characterized in the hybrid-dimensional model. Acomparison  with Fig.11(b) shows that methods 
+like the PINNs, which consider discrete nodal information, have a great advantage in using Dirac-𝛿functions to describe the fracture. 
+However, the diﬃculty in accurately describing large gradients due to the automatic diﬀerentiation technique used in PINNs and 
+the need to set the values of the individual weights in the loss function make this result still less satisfactory. Therefore, we propose 
+the I-PINNs based on the above work. We use 1600 rectangular cells, so that the number of mesh vertices is still 1681. The same 
+optimization approach given above as well as the parallel techniques are used. The numerical pressure is shown in Fig.12(b), which 
+is more consistent with the reference solution. Finally, acomparison  of pressure slice of the reference solution, the I-PINNs, and the 
+PINNs with Dirac-𝛿 function along 𝑦 =0 .5is shown in Fig.13. We ﬁnd that the results of the I-PINNs are signiﬁcantly better than 
+those of the conventional PINNs.
+Example 4.3 (Curved fractures). In this example, we simulate a round closed fracture to analyze the feasibility and eﬀectiveness of 
+the I-PINNs frame for curved fractures. The computational domain is a unit square. The parameter equations of the fracture are given 
+as
+{
+𝑥1(𝑡)= 1
+2 + 1
+4 cos(𝑡)
+𝑦1(𝑡)= 1
+2 + 1
+4 sin(𝑡), 0 ≤𝑡 ≤2𝜋.
+The permeabilities of porous media and fracture are set to be 1 and 104, respectively. The thickness of fractures is 0.0025. We impose 
+Dirichlet boundary conditions 𝑝𝐷 =1 and 𝑝𝐷 =0 on the left and right boundaries. The other boundaries are impermeable (as shown 
+in Fig.14(a)).
+
+
+--- PAGE 10 ---
+Journal of Computational Physics 520 (2025) 113491
+10
+C .W a n g ,H .G u o ,X .Y a ne ta l .
+Fig. 11. NodaldistributionandresultsofPINNs.
+Fig. 12. ComparisonoftheresultsoftheI-PINNsandthePINNs.
+We use uniform rectangular grids (Nx = Ny = 50) to discretize the computational domain and make 800,000 iteration steps. 
+The reference solution in Fig.14(b) is in better agreement with the result we obtained in Fig.15(a). Next, the variation of the MAE 
+training loss for all epochs is plotted in Fig. 15(b), showing that the lowest loss is about 4.589 ×1 0−4. Further, Fig. 16 quantiﬁes 
+the pressure at 𝑦 =0 .5and 𝑥 =0 .3proﬁles. By comparing the results of the reference solution and the I-PINNs, we ﬁnd that there 
+is not much diﬀerence between them. The maximum errors between the I-PINNs and the reference solution are 5.316 ×1 0−2 and 
+3.599 ×10−2 on the two line segments, indicating that the I-PINNs can be well applied to curved fractures.
+Example 4.4 (Regular fracture network). This example [45]simulates  the regular fracture network in a square domain [0,1]×[0 ,1]. 
+The fractures are located at 𝑥 =0.5, 𝑥 =0.625, 𝑥 =0.75, 𝑦 =0.5, 𝑦 =0.625and 𝑦 =0.75, and each fracture has thickness 𝜖=10−4. The 
+
+
+--- PAGE 11 ---
+Journal of Computational Physics 520 (2025) 113491
+11
+C .W a n g ,H .G u o ,X .Y a ne ta l .
+Fig. 13. Comparisonofresultsusingvariousmethodsontheline 𝑦=0.5.
+Fig. 14. Boundaryconditionsandreferencesolution.
+Fig. 15. I-PINNsresultandconvergencecurveofthelossfunction.
+permeabilities of matrix and fracture are 1 and 104, respectively. In addition, the left boundary is the inﬂow boundary with 𝑞𝑁 =1, 
+while the right boundary is the Dirichlet boundary with 𝑝𝐷 =1. The other boundaries are set to be impermeable, i.e., 𝑞𝑁 =0 (as 
+shown in Fig.17(a)).
+To verify the accuracy of I-PINNs in the case of multiple complex fracture networks. We use 2500 uniform rectangular meshes 
+to discretize the computational domain and make half a million iteration steps. The reference solution given in Fig. 17(b) matches 
+well with the numerical pressure in Fig.18(a). In addition, we ﬁnd from Fig.18(b) that it is very diﬃcult to accurately describe the 
+pressure of each fracture when simulating such complex fractures with conventional PINNs, thus also indicating that our proposed 
+model is quite advantageous in simulating complex fracture networks. The variation of the MAE training loss for all epochs is plotted 
+
+
+--- PAGE 12 ---
+Journal of Computational Physics 520 (2025) 113491
+12
+C .W a n g ,H .G u o ,X .Y a ne ta l .
+Fig. 16. Pressureproﬁlesalongdiﬀerentlines.
+Fig. 17. Boundaryconditionsandreferencesolution.
+Fig. 18. ComparisonofresultsforPINNsandI-PINNs.
+in Fig. 19, showing that the lowest loss is about 1.944 ×1 0−4. Similar to the previous examples, Fig. 20 shows the pressure along 
+𝑦 =0.7and 𝑥 =0.5. By comparing the results of the reference solution and the I-PINNs, it is found that the two curves are very close 
+to each other. The maximum errors between the I-PINNs and the reference solution are 1.70 ×10−2 and 2.5 ×10−3 on the two line 
+segments. The results show that for complex multiple fracture models, the I-PINNs also have good accuracy.
+Example 4.5 (A realistic case). This example is a benchmark problem in [45], modiﬁed from a real set of fractures from an interpreted 
+outcrop in the Sotra island. It is a complex fracture network containing 63 fractures with diﬀerent lengths and connectivity. Following 
+the set up in [19], the computational region was uniformly shrunk to Ω =[ 0, 1.4] ×[ 0, 1.2], the top and bottom boundaries are 
+
+
+--- PAGE 13 ---
+Journal of Computational Physics 520 (2025) 113491
+13
+C .W a n g ,H .G u o ,X .Y a ne ta l .
+Fig. 19. TheconvergenceoftheMAElossoverepochs.
+Fig. 20. Pressureproﬁlesalongdiﬀerentlines.
+Fig. 21. Fracturemodeling,boundaryconditionsandFEMresults.
+impermeable, i.e. 𝑞𝑁 =0, while the left and right boundaries are Dirichlet ones with 𝑝𝐷 =1 and 𝑝𝐷 =0, respectively. The regional 
+settings and the fractures on it are presented in Fig.21(a). These fractures have uniform thickness of 𝜖 =2.5 ×10−4 and permeability 
+of 104, while the matrix permeability is 1. Detailed geometric data for the fractures can be found in Ref. [18], while we just reduce 
+their geometry uniformly.
+In order to verify that the I-PINNs proposed in this paper can simulate real fracture cases, we will arrange 35 ×3 0uniform 
+rectangular mesh division areas. In I-PINNs, we use a 4-layer fully connected network with 600 neurons per hidden layer and iterate 
+one million steps. It’s great to see that the results of FEM and I-PINNs are in good agreement in Figs.21(b) and 22(a). In both cases, 
+
+
+--- PAGE 14 ---
+Journal of Computational Physics 520 (2025) 113491
+14
+C .W a n g ,H .G u o ,X .Y a ne ta l .
+Fig. 22. I-PINNsresultsandlossfunctionconvergencecurve.
+Fig. 23. Pressureproﬁlesalongdiﬀerentlines.
+Fig. 24. 3DDomainandboundaryconditions.
+the same mesh was used for analysis, which further strengthens the comparison between the two methods. This agreement suggests 
+that I-PINNs can simulate the real fracture situation very well. As usual, we still give the loss convergence curve for this problem (as 
+in Fig.22(b)). In addition, Fig.23shows the pressure along 𝑦 =0.5and 𝑥 =0.625. By comparing the ﬁnite element results and the 
+I-PINNs, we ﬁnd that the two curves are very close. The maximum errors between the I-PINNs and the FEM results are 5.453 ×10−2
+and 3.344 ×1 0−2 on the two line segments. Through the above analysis we can conclude that I-PINNs still have good accuracy, 
+convergence performance in simulating complex real fracture problems.
+Example 4.6 (3D case). In the last example, we simulate a single plane fracture in the 3D cubic domain [0,1]×[0 ,1]×[0 ,1], and the 
+four vertex coordinates of the fracture are (0.25, 0.2, 0.1), (0.25, 0.7, 0.7), (0.75, 0.7, 0.7)and (0.75, 0.2, 0.1). The permeability of matrix 
+is 1, and the thickness and permeability of fracture are 10−3 and 104, respectively. In addition, the left and right boundaries of the 
+calculation domain meet the Dirichlet boundary conditions 𝑝𝐷 =1 and 𝑝𝐷 =0, respectively. The other boundaries are impermeable 
+(seeFig. 24).
+
+
+--- PAGE 15 ---
+Journal of Computational Physics 520 (2025) 113491
+15
+C .W a n g ,H .G u o ,X .Y a ne ta l .
+Fig. 25. Sliceplanesinx-directionofpressurein3Dspace.
+Fig. 26. Sliceplanesiny-directionofpressurein3Dspace.
+Fig. 27. Sliceplanesinz-directionofpressurein3Dspace.
+To verify that training the 3D model with the I-PINNs architecture still yields good target results. The cubic structure was divided 
+into 20 ×20  ×20 meshes. Then we constructed 2 hidden layers with 300 neurons in each hidden layer. The total iteration step is 
+set to be 100,000. It should be noted that the hybrid-dimensional representation of the permeability tensor in the 3D model from 
+[18]is  𝐊 = 𝐊𝑚 + ∑𝐿
+𝑖=1 𝜖𝑖𝑘𝑓𝑖𝛿𝑖(⋅)1𝑖(⋅)(𝐈 − 𝝈𝒊𝝈𝑻
+𝒊 ). Figs.25–27illustrate the slice planes in the coordinate axes-direction of pressure in 
+3D space. From the ﬁgures we can see that there are essentially the same between the ﬁnite element results on the coarse mesh and 
+I-PINNs results, indicating that the I-PINNs can be successfully extended to 3D problems.
+
+
+--- PAGE 16 ---
+Journal of Computational Physics 520 (2025) 113491
+16
+C .W a n g ,H .G u o ,X .Y a ne ta l .
+Algorithm 1 Bayesian personalized ranking based latent feature embedding model.
+Input: simulation time 𝑇, time step Δ𝑡, training tolerance 𝜀, and maximum epoch number 𝑀
+Output: 𝑐∗
+1: while 𝑡 <𝑇 do
+2: if  t = ﬁrst time: initialize NN by using Xavier method, and input IC
+3: if  t >ﬁrst time: initialize NN by using the trained NN of previous time step
+4: update  equation parameters
+5: m  = 1
+6: while 𝑚 <𝑀 and MAE>𝜀 do
+7: input  pressure at previous time step 𝑐𝑡 into NN to get current approximate pressure 𝑐∗
+8: evaluate  loss MAE by using Eq.(5.7)
+9: optimize  NN parameters according to MAE
+10: m  = m + 1
+11: end while
+12: take  𝑐∗ associated with the lowest loss as 𝑐𝑡+1
+13: 𝑡 =𝑡 +Δ𝑡
+14: end while
+5. Applications in contaminant transportation in fractured porous media
+In this section, we continue to explore in depth the contaminant transport in fractured porous media with the novel discrete 
+fracture model. The governing equations of the contaminanttransportation  reads
+𝜙𝑐𝑡 +∇ ⋅(u𝑐)−∇ ⋅(D(u)∇𝑐)= ̃𝑐𝑞, (𝑥,𝑡)∈Ω×(0 ,𝑇 ], (5.1)
+(u𝑐− D(u)∇𝑐) ⋅ n=𝑐𝑖𝑛u ⋅ n, (𝑥,𝑡)∈Γ 𝑖𝑛 ×(0,𝑇 ], (5.2)
+(−D(u)∇𝑐) ⋅ n=0, (𝑥,𝑡)∈Γ 𝑜𝑢𝑡 ×(0,𝑇 ], (5.3)
+𝑐(𝑥,0)= 𝑐0(𝑥),𝑥 ∈Ω, (5.4)
+where 𝑐is the concentration of the contaminant, 𝜙is the porosity of the porous media, uis the Darcy’s velocity of the ﬂow, D(u)is 
+the diﬀusion coeﬃcient of the contaminant, 𝑞 is the source term, ̃𝑐 =𝑐 if 𝑞< 0and ̃𝑐 =𝑐𝑖𝑛𝑗𝑒𝑐𝑡 is the inﬂow concentration from the 
+source term if 𝑞> 0, Γ𝑖𝑛 is the inﬂow boundary and Γ𝑜𝑢𝑡 is the outﬂow boundary, 𝑐𝑖𝑛 is the concentration of the contaminant on the 
+inﬂow boundary, 𝑐0 is the initial concentration of the contaminant. The time derivative is discretized by the forward Euler method. 
+In addition, for the numerical solutions of concentrations beyond the range of [0, 1], we use the I-PINNs bounds-preserving method 
+for the treatment. This method is based on the idea of data normalization, which maps the concentration c to the [0, 1] range. The 
+normalization equations and examples are shown below:
+𝑐 = 𝑐−𝑐𝑚𝑖𝑛
+𝑐𝑚𝑎𝑥 −𝑐𝑚𝑖𝑛
+. (5.5)
+The fully-discrete FEM formulation is to ﬁnd 𝑐 ∈𝐻1
+0, s.t. ∀𝜂∈𝐻1
+0
+∫
+Ω
+𝜙𝑐𝑡+1 −𝑐𝑡
+Δ𝑡 𝜂𝑑𝑥𝑑𝑦 − ∫
+Ω
+(u𝑐𝑡+1) ⋅∇𝜂𝑑𝑥𝑑𝑦 + ∫
+Ω
+(D(u)∇𝑐𝑡+1) ⋅∇𝜂𝑑𝑥𝑑𝑦 = ∫
+Ω
+̃𝑐𝑞𝜂𝑑𝑥𝑑𝑦 − ∫
+Γ𝑖𝑛
+𝑐𝑖𝑛u ⋅ n𝜂𝑑𝑠. (5.6)
+Furthermore, the output of the NN is substituted into Eq. (5.6)t o approximate the PDE residual which should be minimized. 
+Therefore, mean absolute error (MAE) loss function for the NN is deﬁned as
+𝐿𝑜𝑠𝑠𝑓 =𝑡𝑜𝑟𝑐ℎ.𝑎𝑏𝑠(∫
+Ω
+𝜙𝑐∗ −𝑐𝑡
+Δ𝑡 𝜂𝑑𝑥𝑑𝑦 − ∫
+Ω
+(u𝑐∗) ⋅∇𝜂𝑑𝑥𝑑𝑦 + ∫
+Ω
+(D(u)∇𝑐∗) ⋅∇𝜂𝑑𝑥𝑑𝑦 − ∫
+Ω
+̃𝑐𝑞𝜂𝑑𝑥𝑑𝑦
++ ∫
+Γ𝑖𝑛
+𝑐𝑖𝑛u ⋅ n𝜂𝑑𝑠).𝑚𝑒𝑎𝑛(),
+(5.7)
+where 𝑐∗ is the NN output that represents 𝑐𝑡+1. It is worth noting that we need to use the NN results trained in the previous time step 
+as the input values for the initial NN in the current time step. The complete training algorithm is as follows (Algorithm1).
+5.1. The bound-preserving test
+In this example, we simulate the transport of contaminants in the porous media containing fracture and verify the signiﬁcance of the 
+bound-preserving technique in simulating miscible displacements in porous media. Let Ω =[0, 2𝜋] ×[0, 2𝜋]. The initial concentrations 
+𝑐0 is
+𝑐0 =
+{
+1, 0 ≤𝑥 ≤ 𝜋
+2 , 3𝜋
+4 ≤𝑦 ≤ 5𝜋
+4 ,
+0, otherwise.
+
+
+--- PAGE 17 ---
+Journal of Computational Physics 520 (2025) 113491
+17
+C .W a n g ,H .G u o ,X .Y a ne ta l .
+Fig. 28. Domainandboundaryconditions.
+Fig. 29. Concentrationcwithoutboundary-preserving.
+Fig. 30. Concentrationcwithboundary-preserving.
+The left and right endpoints of the fracture are (𝜋
+2 , 𝜋), (15𝜋
+8 , 𝜋), respectively. Other parameters are taken to be 𝜙 =1, 𝐊𝑚 = 𝐈, 𝜖𝑘𝑓 =
+102, 𝐃 =0.1𝐈, 𝑐𝑖𝑛 =0. Moreover, for pressure equation, the left and right boundaries are Dirichlet boundaries with pressure 𝑝𝐷𝑙𝑒𝑓𝑡 =2, 
+𝑝𝐷𝑟𝑖𝑔ℎ𝑡 =0, while the bottom and top boundaries are Neumann boundaries with 𝑝𝑁 =0. The left boundary is the inﬂow boundary 
+with 𝑐𝑖𝑛 =0. The right boundary is the outﬂow boundary. For a detailed description, see Fig.28.
+In this example, we calculate the numerical results for 𝑇 =0.1s, 𝑇 =0.5s, and 𝑇 =0.9s. It should be noted that we divided the 
+computational domain into 40 ×40uniform rectangular meshes and the time interval is set to 𝑑𝑡 =0.1s. For I-PINNs, we used 2 hidden 
+layers with 200 neurons per layer and 200,000 iteration steps. To test the eﬀectiveness of the boundary-preserving technique, we 
+simulated the results without the I-PINNs boundary-preserving technique (shown in Fig.29), and the numerical results after adopting 
+it (shown in Fig.30). We can conclude that the boundary-preserving technique is eﬀective and that the concentration c after bound 
+preservation is between 0 and 1.
+6. Conclusion
+In this paper, we proposed the novel I-PINNs framework and applied it to RDFM for single-phase ﬂow. Meanwhile, we proposed a 
+boundary-preserving technique based on I-PINNs and successfully applied it to simulate the contaminant transportation in fractured 
+porous media. Compared with the traditional PINNs, I-PINNs could get rid of the large errors in the computation of the extreme 
+
+
+--- PAGE 18 ---
+Journal of Computational Physics 520 (2025) 113491
+18
+C .W a n g ,H .G u o ,X .Y a ne ta l .
+heterogeneous problems using the automatic diﬀerentiation technique, and at the same time, avoided the process of matrix inversion 
+compared to the traditional numerical methods. Additionally, it had good agent modeling characteristics.
+The examples presented in this paper demonstrated that the method based on I-PINNs was able to solve the fracture problem 
+eﬃciently and with very high accuracy. It was also important to emphasize that the I-PINNs-based approach could easily be used 
+to deal with complex fracture networks and 3D fracture structures since the variety of training parameters could be kept almost 
+constant as the number and dimension of the fractures increased. In order to gain insight into the model, we also analyzed and 
+quantiﬁed the performance of the I-PINNs model by selecting diﬀerent underlying network architectures. Nevertheless, I-PINNs still 
+have some limitations in modeling fractured porous media problems. For example, it was not computationally eﬃcient when dealing 
+with multiple tiny fractures. Currently, we have incorporated GPU parallelism into our approach to solve this problem. In conclusion, 
+the developed I-PINNs framework could be considered as a powerful alternative to the single-phase ﬂow problem in fractured porous 
+media.
+CRediT authorship contribution statement
+Chao Wang:Writing – original draft, Software, Methodology. Hui Guo:Writing – review & editing, Supervision, Investigation, 
+Funding acquisition. Xia Yan: Methodology. Zhang-Lei Shi: Methodology. Yang Yang: Writing – review & editing, Validation, 
+Methodology, Funding acquisition, Conceptualization.
+Declaration of competing interest
+The authors declare the following ﬁnancial interests/personal relationships which may be considered as potential competing 
+interests: Hui Guo reports ﬁnancial support, equipment, drugs, or supplies, and travel were provided by National key Nature Science 
+Foundation of China. Hui Guo reports ﬁnancial support, equipment, drugs, or supplies, and travel were provided by Natural Science 
+Foundation of Shandong Province. Yang Yang reports travel was provided by Simons Foundation. If there are other authors, they 
+declare that they have no known competing ﬁnancial interests or personal relationships that could have appeared to inﬂuence the 
+work reported in this paper.
+Data availability
+Data will be made available on request.
+References
+[1] G.I. Barenblatt, I.P. Zheltov, I.N. Kochina, Basic concepts in the theory of seepage of homogeneous liquids in ﬁssured rocks [strata], J.Appl.  Math. Mech. 24(5)  
+(1960) 1286–1303.
+[2] S. Geiger, M. Dentz, I. Neuweiler, A novel multi-rate dual-porosity model for improved simulation of fractured and multiporosity reservoirs, SPE J. 18(04)  (2013) 
+670–684.
+[3] H. Kazemi, Pressure transient analysis of naturally fractured reservoirs with uniform fracture distribution, Soc. Pet. Eng. J. 9(04)  (1969) 451–462.
+[4] L.K. Thomas, T.N. Dixon, R.G. Pierson, Fractured reservoir simulation, Soc. Pet. Eng. J. 23(01)  (1983) 42–54.
+[5] R.G. Baca, R.C. Arnett, D.W. Langford, Modelling ﬂuid ﬂow in fractured-porous rock masses by ﬁnite-element techniques, Int. J. Numer. Methods Fluids 4(4)  
+(1984) 337–348.
+[6] S. Geiger-Boschung, S.K. Matthäi, J. Niessner, R. Helmig, Black-oil simulations for three-component, three-phase ﬂow in fractured porous media, SPE J. 14(02)  
+(2009) 338–354.
+[7] M. Karimi-Fard, A. Firoozabadi, Numerical simulation of water injection in 2D fractured media using discrete-fracture model, in: SPE Annual Technical Conference 
+and Exhibition, January 2001, SPE-71615-MS.
+[8] J.G. Kim, M.D. Deo, Finite element, discrete-fracture model for multiphase ﬂow in porous media, AIChE J. 46(6)  (2000) 1120–1130.
+[9] J. Noorishad, M. Mehran, An upstream ﬁnite element method for solution of transient transport equation in fractured porous media, Water Resour. Res. 18(3)  
+(1982) 588–596.
+[10] N. Zhang, J. Yao, Z. Huang, Y. Wang, Accurate multiscale ﬁnite element method for numerical simulation of two-phase ﬂow in fractured media using discrete-
+fracture model, J.Comput.  Phys. 242 (2013) 420–438.
+[11] M. HosseiniMehr, M. Cusini, C. Vuik, H. Hajibeygi, Algebraic dynamic multilevel method for embedded discrete fracture model (F-ADM), J.Comput.  Phys. 373 
+(2018) 324–345.
+[12] L. Li, S.H. Lee, Eﬃcient ﬁeld-scale simulation of black oil in a naturally fractured reservoir through discrete fracture networks and homogenized media, SPE 
+Reserv. Eval. Eng. 11(04)  (2008) 750–758.
+[13] M. Tene, S.B. Bosma, M.S. Al Kobaisi, H. Hajibeygi, Projection-based embedded discrete fracture model (pEDFM), Adv. Water Resour. 105 (2017) 205–216.
+[14] J. Xu, B. Sun, B. Chen, A hybrid embedded discrete fracture model for simulating tight porous media with complex fracture systems, J.Pet.  Sci. Eng. 174 (2019) 
+131–143.
+[15] A. Fumagalli, A. Scotti, An eﬃcient XFEM approximation of Darcy ﬂows in arbitrarily fractured porous media, Oil Gas Sci. Technol. 69(4)  (2014) 555–564.
+[16] H. Huang, T.A. Long, J. Wan, W.P. Brown, On the use of enriched ﬁnite element method to model subsurface features in porous media ﬂow problems, Comput. 
+Geosci. 15(4)  (2011) 721–736.
+[17] S. Salimzadeh, N. Khalili, Fully coupled XFEM model for ﬂow and deformation in fractured porous media with explicit fracture ﬂow, Int. J. Geomech. 16 (4) 
+(2015) 04015091.
+[18] Z. Xu, Y. Yang, The hybrid dimensional representation of permeability tensor: a reinterpretation of the discrete fracture model and its extension on nonconforming 
+meshes, J.Comput.  Phys. 415 (2020) 109523.
+[19] H. Guo, W. Feng, Z. Xu, Y. Yang, Conservative numerical methods for the reinterpreted discrete fracture model on non-conforming meshes and their applications 
+in contaminant transportation in fractured porous media, Adv. Water Resour. 153 (2021) 103951.
+[20] Z. Xu, Z. Huang, Y. Yang, The hybrid-dimensional Darcy’s law: a non-conforming reinterpreted discrete fracture model (RDFM) for single-phase ﬂow in fractured 
+media, J.Comput.  Phys. 473 (2023) 111749.
+
+
+--- PAGE 19 ---
+Journal of Computational Physics 520 (2025) 113491
+19
+C .W a n g ,H .G u o ,X .Y a ne ta l .
+[21] Z. Xu, Y. Yang, The hybrid-dimensional Darcy’s law: a non-conforming reinterpreted discrete fracture model (RDFM) for the compressible miscible displacement 
+and multicomponent gas ﬂow in fractured media, in: Paper Presented at the SPE Reservoir Simulation Conference, Galveston, Texas, USA, March 2023.
+[22] G. Fu, Y. Yang, A hybrid-mixed ﬁnite element method for single-phase Darcy ﬂow in fractured porous media, Adv. Water Resour. 161 (2022) 104129.
+[23] G. Fu, Y. Yang, A hybridizable discontinuous Galerkin method on unﬁtted meshes for single-phase Darcy ﬂow in fractured porous media, Adv. Water Resour. 
+173 (2023) 104390.
+[24] X. Wu, H. Guo, Z. Xu, Y. Yang, A reinterpreted discrete fracture model for Darcy–Forchheimer ﬂow in fractured porous media, Adv. Water Resour. 179 (2023) 
+104504.
+[25] A. Choubineh, J. Chen, F. Coenen, F. Ma, A quantitative insight into the role of skip connections in deep neural networks of low complexity: a case study directed 
+at ﬂuid ﬂow modeling, J.Comput.  Inf. Sci. Eng. 23 (2023) 014502.
+[26] R. Khosravi, M. Zamaemifard, S. Safarzadeh, M. Passandideh-Fard, A.R. Teymourtash, A. Shahsavar, Predicting entropy generation of a hybrid nanoﬂuid in 
+microchannel heat sink with porous ﬁns integrated with high concentration photovoltaic module using artiﬁcial neural networks, Eng. Anal. Bound. Elem. 150 
+(2023) 259–271.
+[27] M.H. Kim, C.M. Song, Prediction of the soil permeability coeﬃcient of reservoirs using a deep neural network based on a dendrite concept, Processes 11 (2023) 
+661.
+[28] A. Marcato, J.E. Santos, G. Boccardo, H. Viswanathan, D. Marchisio, M. Prodanovic, Prediction of local concentration ﬁelds in porous media with chemical 
+reaction using a multi scale convolutional neural network, Chem. Eng. J. 455 (2023) 140367.
+[29] Y.D. Wang, Q. Meyer, K. Tang, J.E. McClure, R.T. White, S.T. Kelly, M.M. Crawford, F. Iacoviello, D.J. Brett, P.R. Shearing, et al., Large-scale physically accurate 
+modelling of real proton exchange membrane fuel cell with deep learning, Nat. Commun. 14 (2023) 745.
+[30] C. Zhu, J. Wang, S. Sang, W. Liang, A multiscale neural network model for the prediction on the equivalent permeability of discrete fracture network, J.Pet.  Sci. 
+Eng. 220 (2023) 111186.
+[31] F. Zhang, X. He, Q. Teng, X. Wu, J. Cui, X. Dong, Pm-arnn: 2d-to-3d reconstruction paradigm for microstructure of porous media via adversarial recurrent neural 
+network, Knowl.-Based Syst. (2023) 110333.
+[32] Y. Jiang, W. Shen, H. Zhang, K. Zhang, J. Wang, L. Zhang, An interpretable recurrent neural network for waterﬂooding reservoir ﬂow disequilibrium analysis, 
+Water 15 (2023) 623.
+[33] H. Lei, L. Xing, H. Jiang, Y. Wang, B.B. Xu, J. Xuan, T.X. Liu, Designing graded fuel cell electrodes for proton exchange membrane (pem) fuel cells with recurrent 
+neural network (rnn) approaches, Chem. Eng. Sci. 267 (2023) 118350.
+[34] M. Yang, J.T. Foster, Using physics-informed neural networks to solve for permeability ﬁeld under two-phase ﬂow in heterogeneous porous media, J. Mach. 
+Learn. Model. Comput. 4 (2023).
+[35] M. Raissi, P. Perdikaris, G.E. Karniadakis, Physics-informed neural networks: a deep learning framework for solving forward and inverse problems involving 
+nonlinear partial diﬀerential equations, J.Comput.  Phys. 378 (2019) 686–707.
+[36] S. Xu, Z. Sun, R. Huang, D. Guo, G. Yang, S. Ju, A practical approach to ﬂow ﬁeld reconstruction with sparse or incomplete data through physics informed neural 
+network, Acta Mech. Sin. 39 (2023) 1–15.
+[37] Y. Gu, C. Zhang, M.V. Golub, Physics-informed neural networks for analysis of 2d thin-walled structures, Eng. Anal. Bound. Elem. 145 (2022) 161–172.
+[38] Z. Zhang, X. Yan, P. Liu, K. Zhang, R. Han, S. Wang, A physics-informed convolutional neural network for the simulation and prediction of two-phase Darcy 
+ﬂows in heterogeneous porous media, J.Comput.  Phys. (2023) 111919.
+[39] X. Yan, J. Lin, S. Wang, Z. Zhang, P. Liu, S. Sun, J. Yao, K. Zhang, Physics-informed neural network simulation of two-phase ﬂow in heterogeneous and fractured 
+porous media, Adv. Water Resour. 189 (2024) 104731.
+[40] A. Alhubail, X. He, M. AlSinan, H. Kwak, H. Hoteit, Extended physics-informed neural networks for solving ﬂuid ﬂow problems in highly heterogeneous media, 
+in: International Petroleum Technology Conference, IPTC, 2022.
+[41] W. Feng, H. Guo, Y. Kang, Y. Yang, Bound-preserving discontinuous Galerkin methods with second-order implicit pressure explicit concentration time marching 
+for compressible miscible displacements in porous media, J.Comput.  Phys. (2022) 111240.
+[42] S.A. Faroughi, R. Soltanmohammadi, P. Datta, S. Faroughi, Physics-informed neural networks with periodic activation functions for solute transport in hetero-
+geneous porous media, Mathematics 12 (2023) 63.
+[43] W. E, B. Yu, The deep Ritz method: a deep learning-based numerical algorithm for solving variational problems, Commun. Math. Stat. 6(1)  (2018) 1–12.
+[44] M. Ţene, S.B. Bosma, M.S. Al Kobaisi, H. Hajibeygi, Projection-based embedded discrete fracture model (pedfm), Adv. Water Resour. 105 (2017) 205–216.
+[45] B. Flemisch, I. Berre, W. Boon, A. Fumagalli, N. Schwenck, A. Scotti, I. Stefansson, A. Tatomir, Benchmarks for single-phase ﬂow in fractured porous media, Adv. 
+Water Resour. 111 (2018) 239–258.

@@ -1,0 +1,116 @@
+runtime:
+  seed: 2026
+  device: "cpu"
+  cpu_threads: 18
+  dtype: "float32"
+
+geometry:
+  x_min: 0.0
+  x_max: 360.0
+  y_min: 0.0
+  y_max: 150.0
+  srv_x_min: 180.0
+  srv_x_max: 360.0
+  srv_y_min: 37.5
+  srv_y_max: 112.5
+  main_frac_x_min: 198.387
+  main_frac_x_max: 360.0
+  main_frac_y_min: 74.995
+  main_frac_y_max: 75.005
+  secondary_fractures:
+    - [333.0545, 333.0645, 46.077375, 103.922625]
+    - [306.1190, 306.1290, 46.077375, 103.922625]
+    - [279.1835, 279.1935, 46.077375, 103.922625]
+    - [252.2480, 252.2580, 46.077375, 103.922625]
+    - [225.3125, 225.3225, 46.077375, 103.922625]
+  dirichlet_segment:
+    x0: 360.0
+    y0: 74.995
+    x1: 360.0
+    y1: 75.005
+
+grid:
+  nx: 180
+  ny: 150
+  thickness_m: 1.0
+
+edfm:
+  max_dense_elements: 5000
+  matrix_fracture_distance_factor: 0.25
+  fracture_tangential_multiplier: 1000.0
+
+physics:
+  mode: "epinn_edfm_singlephase"
+  gravity:
+    enabled: false
+  seconds_per_day: 86400.0
+  transmissibility_scale: 1.0e-4
+
+rock:
+  porosity:
+    matrix: 0.05
+    HF: 0.1
+  permeability_mD:
+    USRV: 1.0
+    SRV: 10.0
+    HF: 30000.0
+  total_compressibility_per_MPa: 1.0e-2
+
+fluid:
+  viscosity_cP: 1.0
+
+well:
+  type: "bhp"
+  name: "producer"
+  x: 360.0
+  y: 75.0
+  constrain_connected_fracture: true
+  target_mode: "exponential"
+  initial_pressure_mpa: 25.0
+  final_pressure_mpa: 3.0
+  decay_rate_per_day: 0.018
+
+pressure:
+  components: ["P12", "P13"]
+  C13_C12: 0.010900084
+  normalization: "component_affine"
+  transmissibility_multipliers: [1.0, 1.0]
+
+time_grid:
+  times_days: [0.0, 0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 100.0, 200.0, 500.0, 750.0, 1000.0]
+
+model:
+  architecture: "sparse"
+  output_dim: 2
+  hidden_dim: 32
+  message_passing_steps: 2
+  adaptive_alpha_init: 0.1
+  anchor_weight_init: 0.01
+  gate_weight_init: 0.5
+
+training:
+  epochs_per_step: 10000
+  learning_rate: 1.0e-3
+  cell_update_lr_multiplier: 10.0
+  grad_clip_norm: 10.0
+  fracture_residual_weight: 50.0
+  fracture_flux_weight: 10.0
+  loss_tolerance: 1.0e-12
+  print_every: 100
+  save_each_step: true
+
+evaluation:
+  times: [0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 100.0, 200.0, 500.0, 750.0, 1000.0]
+
+direct_solver:
+  cg_rtol: 1.0e-9
+  cg_atol: 1.0e-10
+  cg_max_iter: 3000
+
+paths:
+  outputs: "outputs"
+  checkpoints: "outputs/checkpoints"
+  figures: "outputs/figures"
+  logs: "outputs/logs"
+  tables: "outputs/tables"
+  data: "data"

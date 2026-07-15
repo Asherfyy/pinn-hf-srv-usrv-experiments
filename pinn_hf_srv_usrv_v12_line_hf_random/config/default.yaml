@@ -1,0 +1,156 @@
+runtime:
+  seed: 2026
+  device: "cpu"
+  cpu_threads: 15
+  dtype: "float64"
+
+geometry:
+  x_min: 0.0
+  x_max: 360.0
+  y_min: 0.0
+  y_max: 150.0
+  srv_x_min: 180.0
+  srv_x_max: 360.0
+  srv_y_min: 37.5
+  srv_y_max: 112.5
+
+  # v12 keeps these entries as source rectangles only to derive centerlines
+  # and apertures. HF is not a two-dimensional PDE region anymore.
+  hf_representation: "line"
+  line_region_tolerance_m: 1.0e-8
+  main_frac_x_min: 198.387
+  main_frac_x_max: 360.0
+  main_frac_y_min: 74.995
+  main_frac_y_max: 75.005
+  secondary_fractures:
+    - [333.0545, 333.0645, 46.077375, 103.922625]
+    - [306.1190, 306.1290, 46.077375, 103.922625]
+    - [279.1835, 279.1935, 46.077375, 103.922625]
+    - [252.2480, 252.2580, 46.077375, 103.922625]
+    - [225.3125, 225.3225, 46.077375, 103.922625]
+  dirichlet_segment:
+    x0: 360.0
+    y0: 74.995
+    x1: 360.0
+    y1: 75.005
+
+physics:
+  mode: "effective_diffusion"
+  seconds_per_day: 86400.0
+  Fai:
+    HF: 0.1
+    SRV: 0.05
+    USRV: 0.05
+  D1:
+    HF: 1.0
+    SRV: 1.0e-7
+    USRV: 1.0e-9
+  D2:
+    HF: 1.0
+    SRV: 9.95e-8
+    USRV: 9.9e-10
+  anisotropy_y_1: 1.0
+  anisotropy_y_2: 1.0
+
+boundary:
+  P_t0: 25.0
+  P_out: 3.0
+  C13_C12: 0.010900084
+  decay_rate: 0.018
+  pressure_normalization: "component_affine"
+
+sampler:
+  sampling_mode: "random"
+  time_sampling_mode: "random"
+  n_pde_hf: 1000
+  n_pde_srv: 1000
+  n_pde_usrv: 1000
+  n_near_hf_srv: 1000
+  hf_srv_band_width_m: 0.15
+  n_near_srv_usrv: 1000
+  srv_usrv_band_width_m: 0.75
+  n_dirichlet: 1000
+  n_neumann: 1000
+  n_interface_hf_srv: 1000
+  n_interface_srv_usrv: 1000
+  n_hf_main_link: 1000
+  n_hf_secondary_link: 1000
+  n_hf_junction: 1000
+  junction_offset_m: 0.05
+  eps_hf_srv: 0.05
+  eps_srv_usrv: 0.05
+  t_min: 0.0
+  t_max: 1000.0
+  time_strategy: "log1p_uniform"
+
+model:
+  input_dim: 3
+  subnet_input_dim: 3
+  output_dim: 2
+  hidden_layers: 4
+  hidden_units: 112
+  region_hidden_layers:
+    HF: 4
+    SRV: 5
+    USRV: 5
+  region_hidden_units:
+    HF: 96
+    SRV: 128
+    USRV: 128
+  activation: "tanh"
+  constraint_mode: "ic_hard"
+
+training:
+  epochs: 2000
+  learning_rate: 7.0e-4
+  fixed_collocation_points: false
+  resample_every: 1
+  grad_clip_norm: 10.0
+  use_lbfgs: false
+  lbfgs_lr: 1.0
+  lbfgs_max_iter: 20
+  lbfgs_max_eval: 25
+  lbfgs_history_size: 50
+  lbfgs_tolerance_grad: 1.0e-9
+  lbfgs_tolerance_change: 1.0e-11
+  lbfgs_line_search_fn: "strong_wolfe"
+  print_every: 50
+  save_every: 300
+  pressure_range_lower: 0.0
+  pressure_range_upper: 1.05
+
+loss_weights:
+  pde: 1.0
+  dirichlet: 20.0
+  neumann: 0.3
+  interface_pressure: 50.0
+  interface_flux: 0.05
+  hf_main_link: 8.0
+  hf_secondary_link: 6.0
+  hf_junction: 20.0
+  pressure_range: 0.2
+
+evaluation:
+  times: [1.0, 10.0, 100.0, 1000.0]
+  adaptive_plot:
+    coarse_nx: 241
+    coarse_ny: 121
+    srv_nx: 361
+    srv_ny: 241
+    hf_long_axis_points: 800
+    hf_short_axis_points: 1
+    hf_padding_m: 0.1
+    transition_band_points: 200
+  triangulation:
+    mask_cross_region: true
+    max_edge_length_global_m: 5.0
+    max_edge_length_srv_m: 2.0
+    max_edge_length_hf_m: 0.5
+
+paths:
+  outputs: "outputs"
+  checkpoints: "outputs/checkpoints"
+  figures: "outputs/figures"
+  logs: "outputs/logs"
+  tables: "outputs/tables"
+  data: "data"

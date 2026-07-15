@@ -1,4 +1,4 @@
-"""Unified entrypoint for the v8 no-HF-local-coordinate PINN project."""
+"""Unified entrypoint for the v9 base-correction PINN project."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ DEFAULT_CHECKPOINT_PATH = PROJECT_ROOT / "outputs" / "checkpoints" / "final.pt"
 IDE_MODE = "all"
 
 # 是否从已有 checkpoint 继续训练；False 表示从头随机初始化训练。
-IDE_RESUME_FROM_CHECKPOINT = False
+IDE_RESUME_FROM_CHECKPOINT = True
 
 # 继续训练使用的 checkpoint；通常用 final.pt，也可以改成 outputs/checkpoints/epoch_3000.pt。
 IDE_RESUME_CHECKPOINT = DEFAULT_CHECKPOINT_PATH
@@ -48,7 +48,7 @@ def run_command(args: list[str], python_exe: Path) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="v8 no-HF-local-coordinate HF/SRV/USRV PINN entrypoint.")
+    parser = argparse.ArgumentParser(description="v9 base-correction HF/SRV/USRV PINN entrypoint.")
     parser.add_argument("mode", nargs="?", default=IDE_MODE, choices=["test", "train", "evaluate", "plot", "all"])
     parser.add_argument("--epochs", type=int, default=IDE_TARGET_EPOCHS, help="Override training target epochs.")
     parser.add_argument(

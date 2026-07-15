@@ -2,7 +2,7 @@
 
 本仓库用于记录一组基于 Python/PyTorch 的 PINN（Physics-Informed Neural Network）实验项目，研究对象是带有主裂缝、次级细裂缝、SRV 区域和 USRV 区域的二维储层压力场求解问题。
 
-仓库中的多个版本不是彼此独立无关的项目，而是一条连续的建模与调试路线：从原始 PINN 实现，到分区 MLP、生产端硬约束、基准场修正、混合通量形式，再到取消分区网络的单 MLP 对照实验。保留这些版本的目的，是便于比较不同 PINN 结构和约束方式对压力传播、裂缝连通、界面连续性和训练稳定性的影响。
+仓库中的多个版本不是彼此独立无关的项目，而是一条连续的建模与调试路线：从原始 PINN 实现，到分区 MLP、生产端硬约束、基准场修正、混合通量形式，再到取消分区网络的单 MLP 对照实验、v10 的 RDFM/I-PINN 有限元离散残差路线、v11 的 E-PINN/EDFM 有限体积残差路线，以及 v12 的线裂缝强形式 PINN 路线。保留这些版本的目的，是便于比较不同 PINN 结构、裂缝表示方式和约束方式对压力传播、裂缝连通、界面连续性和训练稳定性的影响。
 
 ## 研究问题
 
@@ -59,6 +59,21 @@ Fai * u_t + q_x,x + q_y,y = 0
 
 这种混合形式的目的，是降低 HF 极薄区域和极大扩散系数导致的二阶导训练不稳定问题。
 
+v10 版本另开一条路线：不再用随机采样点上的强形式 PDE residual 训练，而是借鉴 RDFM/I-PINN 文献，把神经网络预测值放到规则 Q1 FEM 网格节点上，再用有限元离散残差作为 loss。对应的半离散形式为：
+
+```text
+M * du/dt + A * u = 0
+```
+
+其中 `M` 是质量矩阵，`A` 是刚度矩阵。时间推进使用隐式 Euler：
+
+```text
+r = M * (u_next - u_prev) / dt + A * u_next
+loss = mean(abs(r_free))
+```
+
+这里的 `r_free` 只包含非 Dirichlet 自由节点残差。生产端 Dirichlet 值在计算残差前直接覆盖到节点压力上；外边界无流条件不再作为 soft loss，而是作为 FEM 弱形式的自然边界条件进入：由于外边界通量项为零，组装时不额外加入边界载荷即可。
+
 ## 几何与边界条件概述
 
 项目的几何范围在各版本中保持一致或基本一致：
@@ -103,6 +118,10 @@ D:\CursorProject
 ├── pinn_hf_srv_usrv_v6_mixed_flux
 ├── pinn_hf_srv_usrv_v7_v5based_single_mlp
 ├── pinn_hf_srv_usrv_v8_no_hf_local_coord
+├── pinn_hf_srv_usrv_v9_base_correction
+├── pinn_hf_srv_usrv_v10_rdfm_ipinn
+├── pinn_hf_srv_usrv_v11_epinn_edfm_singlephase
+├── pinn_hf_srv_usrv_v12_line_hf_random
 ├── mph_extract_simple
 ├── README.md
 └── .gitignore
@@ -122,6 +141,41 @@ src/sampler.py            # PDE/边界/界面采样
 src/train.py              # 训练流程
 src/evaluate.py           # 诊断和评估
 tests/                    # 单元测试
+```
+
+v10 因为采用 RDFM/FEM 离散残差，额外包含：
+
+```text
+src/rdfm_mesh.py          # 规则矩形 Q1 FEM 网格、节点、单元、Dirichlet/free 节点
+src/rdfm_fractures.py     # 将薄矩形 HF 转换为 RDFM 裂缝中心线、开度、切向和积分分段
+src/rdfm_assembly.py      # 组装基质/裂缝质量矩阵和刚度矩阵
+src/fem_solver.py         # 用同一套 RDFM/FEM 矩阵做 PCG 参考求解
+src/plot_mesh.py          # 绘制规则 FEM 网格、RDFM 裂缝中心线和生产端节点
+src/plot_fields.py        # 基于节点快照和三角剖分绘制压力云图
+src/plot_sections.py      # 沿主裂缝和次级裂缝抽取压力剖面
+outputs/snapshots.npz     # v10 的主要结果文件，保存各时间步节点压力快照；可来自 train 或 solve
+```
+
+v11 因为采用 E-PINN/EDFM/FVM 单相流路线，额外包含：
+
+```text
+src/edfm_grid.py          # 规则 cell-centered FVM 网格、EDFM 裂缝段、mm/mf/ff 连接和 sparse graph edges
+src/model.py              # sparse E-PINN 压力向量网络：anchoring、adaptive ReLU、skip/gate、message passing
+src/losses.py             # 单相隐式 Euler FVM residual、双压力分量 residual 和 BHP hard constraint
+src/fvm_solve.py          # 同一 EDFM/FVM 系统的直接隐式参考解，输出 direct_fvm_edfm 快照
+src/plot_mesh.py          # 绘制 EDFM 网格、裂缝段和 BHP cell
+outputs/snapshots.npz     # v11 的 cell-centered pressure_mpa 快照，形状可为 [time, cell, component]
+```
+
+v12 因为采用 v3 分区 MLP + 线裂缝 + 随机非固定 collocation 路线，重点变化在：
+
+```text
+src/geometry.py           # 将原 HF 薄矩形转换为裂缝中心线；HF 只在中心线上作为 REGION_HF
+src/sampler.py            # HF PDE 点、HF-SRV 耦合点、主/次裂缝 link 点全部在线段上随机采样
+src/physics.py            # line_hf_srv_residual：裂缝线点与法向偏移 SRV 点的压力耦合
+src/losses.py             # 保留 v3 强形式 PDE 主路线，但 HF-SRV interface loss 改为线-面耦合
+src/model.py              # 分区 MLP；默认每个子网输入 [x_hat, y_hat, t_hat]，可选 5D local feature
+outputs/checkpoints/      # v12 训练 checkpoint；默认不上传
 ```
 
 ## 版本演化说明
@@ -300,13 +354,224 @@ u12, u13
 - HF 网络输入中的短轴局部坐标固定为 `0.5`，避免 0.01 m 厚度局部坐标放大自动微分导数。
 - 删除 `hf_main_link`、`hf_secondary_link`、`hf_junction` 三类 HF 主裂缝/细裂缝连通增强 loss。
 - HF/SRV/USRV 空间采样使用 Latin hypercube；SRV/USRV 通过 LHS 候选点加几何拒绝筛选得到。
-- 时间采样在 `log(1+t)` 空间使用一维 Latin hypercube。
+- 时间采样改为“连续时间采样 + 固定时间切片”混合方式：50% 点仍使用 `log(1+t)` 空间的一维 LHS，10% 固定在 `t=1 d`，10% 固定在 `t=100 d`，10% 固定在 `t=500 d`，20% 固定在 `t=1000 d`。这样保留早期时间加密，同时保证晚期 1000 d 有足够训练点。
 - 默认 `fixed_collocation_points=false`，每 100 个 epoch 重新生成一套 LHS 点。
 - 默认采样规模为 HF `6000`、SRV `12000`、USRV `6000`，并取消额外近界面 PDE 环带加密。
-- HF-SRV 和 SRV-USRV 界面点仍单独保留，用于压力连续和法向通量连续。
+- HF-SRV 和 SRV-USRV 界面点仍单独保留，用于压力连续和法向通量连续；界面点先保证每条线段最低点数，再把剩余点按线段长度分配，避免 0.01 m 裂缝尖端和主裂缝端部没有采样点。
 - 界面通量残差使用基于界面法向的尺度归一化：`sn=max(1, |kappa_x*n_x|+|kappa_y*n_y|)`，并取界面两侧材料尺度的较大值归一化通量跳跃，避免竖直次级裂缝界面被较大的 `kappa_y` 人为弱化。
 
-该版本用于验证：在不使用 HF 连通增强 loss 的情况下，二维 LHS 采样、动态重采样、HF 短轴局部坐标固定和界面通量法向归一化是否能改善 PDE 覆盖、训练稳定性和压力场合理性。因为输入特征含义、采样分布和界面残差尺度都发生变化，v8 建议从头训练，不建议继续使用旧 checkpoint。详细说明见 `pinn_hf_srv_usrv_v8_no_hf_local_coord/README.md`。
+该版本用于验证：在不使用 HF 连通增强 loss 的情况下，二维 LHS 空间采样、混合时间采样、动态重采样、HF 短轴局部坐标固定、界面线段最低点数分配和界面通量法向归一化是否能改善 PDE 覆盖、训练稳定性和压力场合理性。因为输入特征含义、采样分布和界面残差尺度都发生变化，v8 建议从头训练，不建议继续使用旧 checkpoint。详细说明见 `pinn_hf_srv_usrv_v8_no_hf_local_coord/README.md`。
+
+### `pinn_hf_srv_usrv_v9_base_correction`
+
+基于当前 v8 的基准场修正版本。
+
+核心变化：
+
+- 保留 v8 的几何、分区 MLP、空间 LHS、混合时间采样、界面线段最低点数分配和界面通量法向归一化。
+- 网络不再直接学习完整压力场，而是学习相对基准场的修正：
+
+```text
+u = u_base(x, y, t) + envelope(x, y, t) * correction_NN(x, y, t)
+```
+
+- 默认 `u_base=1`，即初始均匀无量纲压力场。
+- `envelope(t) = (1-exp(-decay_rate*t))**correction_envelope_power`，因此 `t=0` 时修正项为 0，初始条件仍被硬满足。
+- 可选 `model.base_checkpoint`，用于加载冻结 checkpoint 作为基准模型；此时基准场可在 `max(t-base_time_lag_days,t_min)` 处评价。
+- 默认使用 `float32`，用于降低内存占用，并为后续 GPU 加速测试做准备。
+- 默认 `constraint_mode="ic_base_correction"`，checkpoint 版本号为 `partition_mlp_v9_base_correction`，不与 v8 checkpoint 直接混用。
+
+该版本用于验证：在 v8 的采样和界面约束改进基础上，base-correction 输出结构是否能降低 PINN 从零学习压力传播的难度，并改善生产端扰动向主裂缝远端、次级裂缝和 SRV 区域传播的学习效果。
+
+### `pinn_hf_srv_usrv_v10_rdfm_ipinn`
+
+基于 RDFM（Reinterpreted Discrete Fracture Model）和 I-PINN 思想的有限元离散残差版本。
+
+这个版本和 v1-v9 的差别最大。v1-v9 基本都是“连续坐标输入神经网络 + 自动微分强形式 PDE + 边界/界面 soft loss”的 PINN 路线；v10 改成“神经网络预测 FEM 网格节点压力 + 离散弱形式残差”的路线。它更接近文献中的 I-PINN：神经网络仍然参与表达未知场，但物理约束不再依赖二阶自动微分和大量随机 collocation 点，而是来自已经组装好的 FEM/RDFM 稀疏矩阵。
+
+核心建模方式：
+
+- 基质区域为完整矩形储层 `0~360 m` × `0~150 m`，使用代码生成的规则 Q1 矩形 FEM 网格。
+- 默认网格为 `mesh.nx=180`、`mesh.ny=150`，因此 `y=75 m` 主裂缝中心线正好落在节点线上。
+- 基质单元按 cell center 判定为 `SRV` 或 `USRV`，不再把 HF 当成二维薄矩形区域参与 PDE 采样。
+- 原来的主裂缝和 5 条次级裂缝从薄矩形转换为 RDFM 中心线段。
+- 裂缝开度 `epsilon` 取原薄矩形短边长度；裂缝切向取长轴方向。
+- HF 储量和导流能力通过裂缝线积分加入全局质量矩阵和刚度矩阵，而不是通过 HF 区域强形式 PDE 点加入。
+
+v10 组装的矩阵包括：
+
+```text
+matrix mass:
+  ∫Ω Fai * N_i * N_j dx
+
+matrix stiffness:
+  ∫Ω D * grad(N_i) · grad(N_j) dx
+
+fracture mass:
+  Σ_l ∫Γ_l epsilon_l * Fai_HF * N_i * N_j ds
+
+fracture stiffness:
+  Σ_l ∫Γ_l epsilon_l * D_HF * d_tau(N_i) * d_tau(N_j) ds
+```
+
+对 `u12` 和 `u13` 分别组装刚度矩阵；质量矩阵当前共用同一套 `Fai`。裂缝贡献通过 Q1 形函数映射到裂缝穿过的基质单元节点，因此裂缝和基质的耦合由全局矩阵自然完成。
+
+时间推进方式：
+
+- `time_grid.times_days` 默认是 `[0, 1, 10, 100, 500, 1000]`。
+- 这些不是随机采样时间，而是实际离散时间步快照。
+- 训练从 `t=0` 的均匀初始压力开始，依次推进 `0->1`、`1->10`、`10->100`、`100->500`、`500->1000 day`。
+- 每个时间步都训练同一个全局 MLP；进入下一个时间步时继承上一步权重，等价于文献中的 transfer initialization 思路。
+- 每个时间步保存当前步最小 loss 对应的节点压力快照。
+
+边界条件处理：
+
+- 生产端 Dirichlet 边界位于主裂缝右端附近，即 `x=360 m`、`y≈75 m` 的短竖直线段。
+- v10 会在网格节点中找到该线段上的节点；如果线段比网格更细，则退化为选择最接近线段中点的节点。
+- Dirichlet 节点在计算残差前被硬覆盖为目标生产压力，不再依赖 `loss_dirichlet`。
+- 其他外边界默认是零通量边界。由于使用弱形式，齐次 Neumann 边界是自然边界；代码中不额外加入边界通量载荷，也不再使用 `loss_neumann`。
+- SRV/USRV 和裂缝-基质之间的交换由弱形式矩阵和共享节点/形函数耦合表达，不再单独保留 v9 的 `interface_pressure`、`interface_flux`、`hf_link` 主损失。
+
+神经网络与输出：
+
+- v10 使用单个全局 MLP，输入恢复为纯二维归一化坐标 `[x_hat, y_hat]`。
+- 输出为两个无量纲压力分量 `[u12, u13]`。
+- 网络不直接输入时间；时间依赖来自逐时间步训练和继承权重。
+- 默认激活函数为 `relu`，贴近文献设置。
+- 最后一层零初始化，初始网络输出接近均匀初始压力 `u=1`。
+- 后处理时通过已有 affine 归一化工具恢复为 `P12/P13/Ptotal`，单位 MPa。
+
+运行入口：
+
+```powershell
+cd D:\CursorProject\pinn_hf_srv_usrv_v10_rdfm_ipinn
+python main.py test
+python main.py train
+python main.py solve
+python main.py evaluate
+python main.py plot
+python main.py mesh
+```
+
+快速冒烟训练可以减少每步 epoch：
+
+```powershell
+python main.py train --epochs-per-step 2
+```
+
+默认完整训练预算为：
+
+```yaml
+training:
+  epochs_per_step: 200
+```
+
+默认完整训练会进行 5 个时间步、共 1000 个 local epoch 记录。主要输出包括：
+
+```text
+outputs/snapshots.npz             # 节点坐标、三角剖分、各时间步 u12/u13 快照
+outputs/checkpoints/final.pt      # 最终模型权重和训练状态
+outputs/checkpoints/step_*.pt     # 各时间步 checkpoint
+outputs/logs/loss_history.csv     # 每个 local epoch 的残差 loss
+outputs/tables/diagnostics.csv    # 各快照压力范围和非有限值统计
+outputs/figures/field_*.png       # P12/P13/Ptotal rainbow 云图
+outputs/figures/profile_*.png     # 主裂缝和次级裂缝压力剖面
+outputs/figures/loss_history.png  # loss 曲线
+outputs/figures/mesh_*.png        # FEM 网格、RDFM 裂缝和生产端节点图
+```
+
+当前默认配置下已经通过的基本验收包括：
+
+- `python main.py test`：11 个测试通过。
+- `python main.py train`：默认 200 epochs/step 可完成 I-PINN 训练。
+- `python main.py solve`：可用同一套 RDFM/FEM 矩阵生成 PCG 参考快照，并备份已有 `outputs/snapshots.npz`。
+- `python main.py evaluate`：可生成 `diagnostics.csv`，无 NaN/Inf 压力点。
+- `python main.py plot`：可生成 rainbow 压力云图、裂缝剖面和 loss 曲线。
+
+当前需要区分两类输出：`train` 是 I-PINN 残差训练结果，适合研究神经网络是否能逼近离散方程解；`solve` 是同一套 RDFM/FEM 离散系统的 PCG 参考解，适合检查裂缝附近压力传播是否符合高导流裂缝预期。最近一次调试表明，单靠全局 MLP 训练可能在主裂缝附近欠收敛；因此判断 v10 物理合理性时，应优先把 `train` 快照与 `solve` 参考快照对比，再继续做时间步加密、网格加密和 COMSOL/FEM 参考解对比。
+
+v10 的适用场景：
+
+- 需要避免强形式 PINN 对二阶导数和复杂界面 soft loss 的依赖。
+- 希望把裂缝从 0.01 m 薄矩形 PDE 区域改为低维中心线模型。
+- 希望更忠实地复现 RDFM/I-PINN 文献中的“离散残差训练”思路。
+- 接受方法对代码生成 FEM 网格有依赖，而不是完全无网格。
+
+v10 当前的限制：
+
+- 首版只支持代码生成的规则矩形 Q1 网格，不导入 COMSOL 网格。
+- 当前实现只覆盖压力扩散问题，不实现文献中的污染物输运和 bound-preserving 浓度约束。
+- 时间网格默认较粗，适合先看趋势；若要做严肃对比，应加密 `time_grid.times_days`。
+- RDFM 裂缝中心线积分依赖网格和线段切分，网格尺寸变化可能影响数值结果，需要做网格无关性检查。
+- 当前 loss 是节点残差平均绝对值，尚未加入自适应权重、局部误差指示器或多网格训练。
+
+### `pinn_hf_srv_usrv_v11_epinn_edfm_singlephase`
+
+基于 2024 年两相流 E-PINN/EDFM 文献思想的单相流版本。v11 不再使用“坐标到压力”的 MLP，也不使用 v10 的 RDFM/FEM 节点残差；它把上一时间步全场压力向量输入 E-PINN，输出下一时间步全场压力向量，并用 cell-centered FVM residual 训练。
+
+当前 v11 已扩展为同时求解两个压力分量 `P12/P13`。这里仍然是单相压力物理，不是两相流：没有饱和度、相渗、毛管力或 IMPES；`P12/P13` 是两个压力-like 分量，后处理时相加得到 `Ptotal`。
+
+核心建模方式：
+
+- 基质采用规则 cell-centered FVM 网格，裂缝采用 EDFM 中心线段并作为额外 cell。
+- 连接表包含 `T_mm`、`T_mf` 和 `T_ff`，外边界无流通过不添加外边界连接自然实现。
+- 默认网格已经加密到 `grid.nx=180`、`grid.ny=150`，并把主裂缝和 5 条次级裂缝切分为 EDFM 段。
+- 最初的 dense adjacency E-PINN 已改为 sparse graph/message-passing 版本，避免 `N x N` 稠密邻接矩阵限制。`edfm.max_dense_elements` 只控制小网格 dense adjacency 检查，不再限制训练规模。
+- E-PINN 输入/输出张量形状为 `[num_cells, 2]`，两个通道对应 `P12/P13` 的归一化压力。
+- 网络保留 E-PINN 风格的 anchoring、adaptive ReLU、skip connection、gated updating，并通过 sparse `edge_index` 在 EDFM/FVM 图上聚合邻居信息。
+- 单相隐式 Euler residual 对每个压力分量分别计算：
+
+```text
+R_i,c = phi_i * c_t * V_i * (p_i,c* - p_i,c^t) / dt
+        - sum_j T_ij,c * (p_j,c* - p_i,c*)
+loss = mean((R_i,c / row_scale_i,c)^2)
+```
+
+- BHP 生产 cell 和连通的裂缝端点 cell 在 residual 计算前被硬覆盖为目标压力，目标压力也按 `P12/P13` 比例拆分。
+- `pressure.C13_C12` 控制 `P13/P12` 的默认分量比例；`pressure.transmissibility_multipliers` 可以给不同压力分量设置不同有效传导率，默认 `[1.0, 1.0]`。
+- `python main.py train` 训练 sparse E-PINN；`python main.py solve` 用同一套 EDFM/FVM 方程做直接隐式参考解。两者都会写 `outputs/snapshots.npz`，需要通过快照中的 `solver` 字段区分 `sparse_epinn_train` 和 `direct_fvm_edfm`。
+- 绘图输出 `field_P12_t*.png`、`field_P13_t*.png` 和 `field_Ptotal_t*.png`，主裂缝剖面也同时显示三个量。
+
+该版本适合研究：压力向量网络和 EDFM/FVM residual 是否比坐标型 PINN 更容易捕捉沿主裂缝、次级裂缝和基质之间的压力传播。需要特别注意，`solve` 的结果是数值参考解，不是 PINN 训练结果；判断 E-PINN 是否学好时应对比 `train` 和 `solve` 的快照。
+
+### `pinn_hf_srv_usrv_v12_line_hf_random`
+
+基于 v3 分区 MLP 的线裂缝强形式 PINN 版本。v12 的目标是保留 v3 的“坐标输入 + 自动微分 PDE residual + 分区子网”路线，但把 HF 从 `0.01 m` 厚的二维薄矩形区域改成嵌入 SRV 内部的一维裂缝线。
+
+核心建模方式：
+
+- `config/default.yaml` 中仍保留主裂缝和次级裂缝的薄矩形坐标，但这些矩形只作为提取中心线和裂缝开度的源数据。
+- `geometry.hf_representation="line"` 时，HF 只在裂缝中心线上被判定为 `REGION_HF`；原来薄矩形占据的二维空间不再是 HF 面区域，而是 SRV。
+- 主裂缝中心线为 `y=75 m` 的水平线，5 条次级裂缝为竖直中心线。
+- HF PDE collocation 点直接在线段上采样，不再在 0.01 m 厚矩形内部采样。
+- 生产端 Dirichlet 从 v3 的短竖线退化为主裂缝右端点 `(360, 75)`。
+- HF-SRV 耦合不再使用薄矩形两侧 offset 的 interface residual，而是采用“线点 + 法向偏移 SRV 点”的压力耦合：
+
+```text
+sample x_f on fracture centerline
+x_srv = x_f + eps_hf_srv * n
+loss_hf_srv = mean((u_HF(x_f,t) - u_SRV(x_srv,t))^2)
+```
+
+- SRV-USRV interface 仍保留 v3 的压力连续和法向通量连续损失。
+- 主裂缝 link、次级裂缝 link 和 junction coupling 仍保留，但采样点都来自裂缝线。
+- 默认每个子网接收 `[x_hat, y_hat, t_hat]` 三维归一化坐标，即 `model.subnet_input_dim=3`；旧的 `[x_local, y_local, x_hat, y_hat, t_hat]` 五维 local-feature 模式仍可通过 `subnet_input_dim=5` 手动启用。
+- 默认使用随机采样且不固定 collocation 点：
+
+```yaml
+sampler:
+  sampling_mode: "random"
+  time_sampling_mode: "random"
+training:
+  fixed_collocation_points: false
+  resample_every: 1
+  use_lbfgs: false
+```
+
+- 默认关闭 LBFGS，使用 Adam。原因是随机 collocation 下每个 epoch 的训练点都会变化，而 LBFGS closure 会在同一外层步内多次评估，默认与这种随机重采样策略不匹配。
+- 云图绘制时只对 SRV/USRV 作为二维区域填色，HF 作为黑色线叠加；裂缝线上的压力通过剖面图输出。
+
+v12 适合回答的问题是：如果不想采用 v10/v11 的离散网格 residual，但又不希望 HF 被 0.01 m 厚度造成的二维薄区域和短轴二阶导控制，能否在强形式 PINN 中把 HF 显式降维为裂缝线，并通过随机非固定 collocation 提高训练覆盖。它仍然是强形式 PINN，依然依赖自动微分二阶导和 soft loss 权重调节；与 v10/v11 相比，它不是离散守恒残差方法。
 
 ### `mph_extract_simple`
 
@@ -328,6 +593,39 @@ python main.py evaluate
 python main.py plot
 ```
 
+例如运行 v10：
+
+```powershell
+cd D:\CursorProject\pinn_hf_srv_usrv_v10_rdfm_ipinn
+python main.py test
+python main.py train
+python main.py evaluate
+python main.py plot
+python main.py mesh
+```
+
+例如运行 v11：
+
+```powershell
+cd D:\CursorProject\pinn_hf_srv_usrv_v11_epinn_edfm_singlephase
+python main.py test
+python main.py train --time-steps 2 --epochs-per-step 2 --grid-nx 8 --grid-ny 6
+python main.py solve
+python main.py evaluate
+python main.py plot
+python main.py mesh
+```
+
+例如运行 v12：
+
+```powershell
+cd D:\CursorProject\pinn_hf_srv_usrv_v12_line_hf_random
+python main.py test
+python main.py train --epochs 3500 --no-resume
+python main.py evaluate
+python main.py plot
+```
+
 也可以直接调用模块：
 
 ```powershell
@@ -345,7 +643,8 @@ python plot_loss_history.py
 outputs/checkpoints/       # 模型 checkpoint
 outputs/logs/              # loss_history.csv
 outputs/figures/           # 压力云图、loss 曲线、剖面图
-outputs/tables/            # 诊断表
+outputs/tables/            # 诊断表；v10 solve 会写 fem_solver_history.csv，v11 会写 well_history.csv，v12 会写 section_profiles.csv
+outputs/snapshots.npz      # v10 节点压力快照；v11 cell-centered 压力快照；v12 不使用该快照格式作为主输出
 ```
 
 这些输出目录不会上传到 GitHub。
@@ -385,14 +684,23 @@ outputs/tables/            # 诊断表
 - v5：基准场修正版本。
 - v6：混合压力-通量形式版本。
 - v7：单 MLP 对照版本。
-- v8：HF 短轴局部坐标固定、删除 HF 连通增强、使用 LHS 动态重采样的 v3 对照版本。
+- v8：HF 短轴局部坐标固定、删除 HF 连通增强、使用空间 LHS、混合时间采样和界面线段最低点数分配的 v3 对照版本。
+- v9：基于 v8 的 base-correction 输出结构版本。
+- v10：RDFM 低维裂缝 + FEM 离散残差 + I-PINN 训练版本，用于对照强形式 PINN 路线。
+- v11：EDFM 显式裂缝 + FVM 离散残差 + E-PINN 压力向量网络的单相流版本。
+- v12：基于 v3 的线裂缝强形式 PINN 版本，HF 不再是 0.01 m 厚二维区域，默认随机非固定 collocation。
 
 如果目标是分析“为什么压力分布不合理”，建议对比：
 
 - v3 与 v7：观察分区网络是否关键。
 - v5 与 v3：观察 base-correction 是否改善传播。
 - v6 与 v3：观察避免二阶导后训练稳定性是否改善。
-- v8 与 v3：观察 LHS 动态重采样在无 HF 连通增强条件下是否改善训练稳定性和压力场合理性。
+- v8 与 v3：观察空间 LHS、混合时间采样、界面线段最低点数分配和动态重采样在无 HF 连通增强条件下是否改善训练稳定性和压力场合理性。
+- v9 与 v8：观察学习相对基准场修正是否比直接学习完整压力场更容易形成合理压力传播。
+- v10 与 v3/v8/v9：观察把强形式 PDE loss 和界面 soft loss 替换为 RDFM/FEM 离散残差后，压力传播、裂缝连通和训练稳定性是否更合理。
+- v11 与 v10：观察压力向量网络和 EDFM/FVM residual 是否比坐标 MLP + RDFM/FEM residual 更容易学习裂缝导流。
+- v12 与 v3：观察把 HF 从薄矩形 PDE 区域降维为裂缝线后，是否能减少 0.01 m 厚度方向带来的训练困难。
+- v12 与 v10/v11：观察在仍使用强形式 PINN 的前提下，线裂缝采样和随机重采样能否接近离散 residual 方法的裂缝传播效果。
 
 如果目标是调参，优先检查：
 
@@ -401,6 +709,30 @@ outputs/tables/            # 诊断表
 - 是否启用 LBFGS。
 - HF 主裂缝和次级裂缝连通损失是否过强或过弱。
 - 绘图色阶是否统一，避免误判界面不连续。
+
+如果目标是调 v10，优先检查：
+
+- `mesh.nx`、`mesh.ny` 是否能捕捉主裂缝中心线和生产端节点。
+- `time_grid.times_days` 是否足够密，尤其是 `10~500 day` 的中期压降阶段。
+- `physics.Fai`、`physics.D1`、`physics.D2` 中 HF/SRV/USRV 的量级是否符合预期。
+- `training.epochs_per_step` 是否足够让每个隐式时间步残差收敛。
+- `outputs/tables/diagnostics.csv` 中是否存在非有限压力点、负压力点或异常压力范围。
+
+如果目标是调 v11，优先检查：
+
+- `grid.nx`、`grid.ny` 是否足够解析主裂缝和次级裂缝附近的基质压力梯度。
+- `time_grid.times_days` 是否足够密，过大的时间步会让直接 FVM 参考解和 E-PINN 训练都呈现较强隐式平滑。
+- `edfm.fracture_tangential_multiplier`、`rock.permeability_mD.HF` 和 `training.fracture_residual_weight` 是否能体现高导流裂缝。
+- 当前 `outputs/snapshots.npz` 来自 `train` 还是 `solve`。若 `solver=direct_fvm_edfm`，那是直接数值参考解，不是 PINN 训练结果。
+- `loss_history.csv` 中 `P12/P13` 的 residual 是否同时下降，避免只让大尺度的 `P12` 看起来收敛。
+
+如果目标是调 v12，优先检查：
+
+- `geometry.hf_representation` 是否保持为 `"line"`，确认 HF 没有退回薄矩形面区域。
+- `model.subnet_input_dim` 当前默认为 `3`，即每个子网只接收 `[x_hat,y_hat,t_hat]`；若要恢复局部坐标特征，可手动改为 `5`。
+- `training.fixed_collocation_points=false` 和 `training.resample_every=1` 是否符合随机非固定 collocation 设计。
+- `sampler.eps_hf_srv` 是否足够把裂缝线点偏移到 SRV 中，但又不要大到跨过局部几何细节。
+- `loss_weights.interface_pressure`、`hf_main_link`、`hf_secondary_link` 和 `hf_junction` 是否平衡；线裂缝版本仍然依赖这些 soft loss 引导裂缝连通。
 
 ## 注意事项
 
