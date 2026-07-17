@@ -24,16 +24,20 @@ two pressure-like components whose sum is reported as `Ptotal`.
 - The network uses sparse adjacency-location message passing, BatchNorm,
   adaptive ReLU, skip connection, gated updating, and a per-cell update bias
   for faster pressure-vector convergence on a fixed EDFM graph.
-- The single-phase pressure residual is applied independently to each pressure
-  component:
+- v11 now uses only the legacy diffusion coefficient scale from the earlier
+  strong-form projects: `Fai/D1/D2`. The discrete residual is applied
+  independently to each pressure component:
 
 ```text
-R_i,c = phi_i * c_t * V_i * (p_i,c* - p_i,c^t) / dt
+R_i,c = Fai_i * V_i * (p_i,c* - p_i,c^t) / dt_day
         - sum_j T_ij,c * (p_j,c* - p_i,c*)
 loss = mean((R_i,c / row_scale_i,c)^2)
 ```
 
-- `row_scale_i = phi_i c_t V_i / dt + sum_j T_ij`, so large time steps and
+- Connection transmissibility is assembled as
+  `T_ij,c = seconds_per_day * D_c,face * A / L`. This keeps the old second-based
+  diffusion coefficients consistent with v11's day-based time grid.
+- `row_scale_i,c = Fai_i V_i / dt_day + sum_j T_ij,c`, so large time steps and
   weakly connected far-field cells are not hidden by raw residual units.
 - The BHP constraint is applied to both the nearest matrix cell and the
   connected fracture endpoint cell. This is important for a producer located at
@@ -47,9 +51,7 @@ loss = mean((R_i,c / row_scale_i,c)^2)
 - `pressure.C13_C12` controls the default split between the two components. For
   example, total initial pressure `25 MPa` becomes `P12 ~= 24.730 MPa` and
   `P13 ~= 0.270 MPa` when `C13_C12 = 0.010900084`.
-- `pressure.transmissibility_multipliers` can give `P12` and `P13` different
-  effective diffusivities. The default `[1.0, 1.0]` means both components follow
-  the same EDFM graph operator and differ mainly by scale.
+- `P12` uses `physics.D1` and `P13` uses `physics.D2`.
 - `python main.py solve` runs the same single-phase EDFM/FVM equations with a
   direct implicit linear solve for each pressure component. Use it as the
   reference solution when checking whether a bad plot comes from the
@@ -76,7 +78,23 @@ grid:
   ny: 150
 edfm:
   max_dense_elements: 5000
-  fracture_tangential_multiplier: 1000.0
+  fracture_tangential_multiplier: 1.0
+physics:
+  seconds_per_day: 86400.0
+  transmissibility_scale: 1.0
+  diffusivity_keys: ["D1", "D2"]
+  Fai:
+    HF: 0.1
+    SRV: 0.05
+    USRV: 0.05
+  D1:
+    HF: 1.0
+    SRV: 1.0e-7
+    USRV: 1.0e-9
+  D2:
+    HF: 1.0
+    SRV: 9.95e-8
+    USRV: 9.9e-10
 model:
   architecture: "sparse"
   output_dim: 2
@@ -86,7 +104,6 @@ pressure:
   components: ["P12", "P13"]
   C13_C12: 0.010900084
   normalization: "component_affine"
-  transmissibility_multipliers: [1.0, 1.0]
 time_grid:
   times_days: [0.0, 0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 100.0, 200.0, 500.0, 750.0, 1000.0]
 well:
@@ -115,6 +132,8 @@ Outputs are written under `outputs/`:
 
 - v11 uses single-phase physics only. The two-output mode is a dual pressure
   component solve, not a two-phase flow model.
+- Storage always uses `physics.Fai`, and transmissibility always uses the
+  component diffusion keys listed in `physics.diffusivity_keys`.
 - It does not import COMSOL meshes. Matrix cells and EDFM fracture segments are
   generated in code.
 - The E-PINN training path is sparse and uses EDFM/FVM `edge_index` message

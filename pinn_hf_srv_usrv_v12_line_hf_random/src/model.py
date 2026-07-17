@@ -67,14 +67,18 @@ class PINNModel(nn.Module):
         model_cfg = config["model"]
         if int(model_cfg["input_dim"]) != 3:
             raise ValueError("The public model input must be x_hat/y_hat/t_hat with dimension 3.")
-        if str(model_cfg["constraint_mode"]).lower() != "ic_hard":
-            raise ValueError("The v12 partitioned model currently supports constraint_mode='ic_hard'.")
+        self.constraint_mode = str(model_cfg["constraint_mode"]).lower()
+        if self.constraint_mode not in {"ic_hard", "ic_base_correction"}:
+            raise ValueError("The v12 partitioned model supports constraint_mode='ic_hard' or 'ic_base_correction'.")
 
         self.config = config
         self.geometry = ReservoirGeometry(config["geometry"])
         self.subnet_input_dim = int(model_cfg.get("subnet_input_dim", 5))
         if self.subnet_input_dim not in {3, 5}:
             raise ValueError("model.subnet_input_dim must be 3 or 5.")
+        self.base_time_lag_days = float(model_cfg.get("base_time_lag_days", 0.0))
+        self.correction_envelope_power = float(model_cfg.get("correction_envelope_power", 1.0))
+        self.__dict__["_base_model_ref"] = None
 
         activation = str(model_cfg["activation"])
         output_dim = int(model_cfg["output_dim"])
@@ -94,6 +98,15 @@ class PINNModel(nn.Module):
                 for region in ["HF", "SRV", "USRV"]
             }
         )
+
+    def attach_base_model(self, base_model: nn.Module | None) -> None:
+        if base_model is None:
+            self.__dict__["_base_model_ref"] = None
+            return
+        base_model.eval()
+        for param in base_model.parameters():
+            param.requires_grad_(False)
+        self.__dict__["_base_model_ref"] = base_model
 
     def normalize_xyt(self, xyt: torch.Tensor) -> torch.Tensor:
         if xyt.ndim != 2 or xyt.shape[1] != 3:
@@ -167,14 +180,44 @@ class PINNModel(nn.Module):
         decay = float(self.config["boundary"]["decay_rate"])
         return 1.0 - torch.exp(-decay * t)
 
+    def _base_z(self, z: torch.Tensor) -> torch.Tensor:
+        if self.base_time_lag_days <= 0.0:
+            return z
+        x, y, t = self.denormalize_z(z)
+        sampler = self.config["sampler"]
+        t_min = float(sampler["t_min"])
+        t_base = torch.clamp(t - float(self.base_time_lag_days), min=t_min)
+        xyt_base = torch.cat([x, y, t_base], dim=1)
+        return self.normalize_xyt(xyt_base)
+
+    def _correction_envelope(self, z: torch.Tensor) -> torch.Tensor:
+        beta = self._time_envelope(z)
+        power = max(float(self.correction_envelope_power), 1.0e-12)
+        return torch.clamp(beta, min=0.0) ** power
+
+    def _base_field(self, z: torch.Tensor, correction: torch.Tensor) -> torch.Tensor:
+        base_model = self.__dict__.get("_base_model_ref")
+        if base_model is None:
+            return torch.ones_like(correction)
+        z_base = self._base_z(z)
+        base = base_model.forward_normalized(z_base)
+        return base.to(device=correction.device, dtype=correction.dtype)
+
     def _apply_initial_condition(self, raw: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
         beta = self._time_envelope(z)
         return 1.0 + beta * raw
 
+    def _apply_base_correction(self, correction: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
+        base = self._base_field(z, correction)
+        envelope = self._correction_envelope(z)
+        return base + envelope * correction
+
     def forward_region_normalized(self, z: torch.Tensor, region_name: str) -> torch.Tensor:
         region = region_name.upper()
         raw = self.subnets[region](self.features_for_region(z, region))
-        return self._apply_initial_condition(raw, z)
+        if self.constraint_mode == "ic_hard":
+            return self._apply_initial_condition(raw, z)
+        return self._apply_base_correction(raw, z)
 
     def forward_raw_region_normalized(self, z: torch.Tensor, region_name: str) -> torch.Tensor:
         region = region_name.upper()

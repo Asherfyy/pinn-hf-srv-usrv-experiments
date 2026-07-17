@@ -1,28 +1,49 @@
+# v11 默认配置文件
+# 本文件同时服务于原始 E-PINN/EDFM 流程、直接 FVM/EDFM 参考解、
+# POD-MLP 降阶代理模型，以及 POD 产气量/甲烷碳同位素后处理。
+#
+# 重要说明：
+# 1. 所有时间单位默认为 day，压力单位默认为 MPa，长度单位默认为 m。
+# 2. `main.py` 主要读取 E-PINN、FVM、评价和绘图相关配置。
+# 3. `main_POD.py` 是 IDE 友好的 POD 流程入口。它内部的 IDE_* 默认值会覆盖
+#    部分 POD 网格、时间范围和训练参数；如果 IDE_* 设为 None，则使用本文件默认值。
+# 4. YAML 中的中文内容均为注释，不参与程序计算；修改数值时只改冒号后的实际值。
+
 runtime:
+  # 全局随机种子，用于数据划分、神经网络初始化等可重复性控制。
   seed: 2026
+  # 运行设备。当前 v11 POD/直接求解流程默认使用 CPU，避免显存依赖。
   device: "cpu"
+  # CPU 线程数。网格较密或 FVM 快照较多时可根据机器核心数调大/调小。
   cpu_threads: 18
+  # 默认浮点精度。float32 速度较快；如需更高数值精度可在代码支持下改为 float64。
   dtype: "float32"
 
 geometry:
+  # 二维储层计算域范围：x 方向 0-360 m，y 方向 0-150 m。
   x_min: 0.0
   x_max: 360.0
   y_min: 0.0
   y_max: 150.0
+  # SRV 区域边界。HF 主裂缝和次生裂缝位于该区域内。
   srv_x_min: 180.0
   srv_x_max: 360.0
   srv_y_min: 37.5
   srv_y_max: 112.5
+  # 主裂缝几何范围。这里用非常窄的 y 区间表示近似水平裂缝。
   main_frac_x_min: 198.387
   main_frac_x_max: 360.0
   main_frac_y_min: 74.995
   main_frac_y_max: 75.005
+  # 次生裂缝列表，每一项格式为 [x_min, x_max, y_min, y_max]。
+  # 这些裂缝与主裂缝共同构成 HF/SRV/USRV 非均质区域划分的几何基础。
   secondary_fractures:
     - [333.0545, 333.0645, 46.077375, 103.922625]
     - [306.1190, 306.1290, 46.077375, 103.922625]
     - [279.1835, 279.1935, 46.077375, 103.922625]
     - [252.2480, 252.2580, 46.077375, 103.922625]
     - [225.3125, 225.3225, 46.077375, 103.922625]
+  # 定压生产边界段，通常对应井所在的裂缝端点。
   dirichlet_segment:
     x0: 360.0
     y0: 74.995
@@ -30,84 +51,279 @@ geometry:
     y1: 75.005
 
 grid:
-  nx: 180
+  # 默认高分辨率网格数。nx=360、ny=150 对应约 1 m x 1 m 的平面网格。
+  # 若希望 POD 训练更快，可在 main_POD.py 中用 IDE_GRID_NX/IDE_GRID_NY 临时覆盖。
+  nx: 360
   ny: 150
+  # 储层厚度，参与体积、累产气量和同位素后处理换算。
   thickness_m: 1.0
 
 edfm:
+  # EDFM 构造局部致密矩阵时允许的最大元素数，防止超大局部矩阵占用过多内存。
   max_dense_elements: 5000
+  # 基质-裂缝距离修正因子，用于控制矩阵与裂缝之间的等效连通强度。
   matrix_fracture_distance_factor: 0.25
-  fracture_tangential_multiplier: 1000.0
+  # 裂缝切向传导倍率，调大可增强沿裂缝方向的压力传播能力。
+  fracture_tangential_multiplier: 1.0
 
 physics:
+  # v11 的主物理模式：E-PINN + EDFM + 单相扩散/压力传播。
   mode: "epinn_edfm_singlephase"
   gravity:
+    # 当前二维单相模型默认不启用重力项。
     enabled: false
+  # day 与 second 的换算，用于扩散、生产速率等时间量纲转换。
   seconds_per_day: 86400.0
-  transmissibility_scale: 1.0e-4
-
-rock:
-  porosity:
-    matrix: 0.05
+  # 全局 transmissibility 缩放因子，通常保持 1.0。
+  transmissibility_scale: 1.0
+  # 两个压力/组分通道对应的扩散系数键名。
+  diffusivity_keys: ["D1", "D2"]
+  # 区域孔隙度/有效储集参数。HF 为裂缝区，SRV 为改造区，USRV 为未改造区。
+  Fai:
     HF: 0.1
-  permeability_mD:
-    USRV: 1.0
-    SRV: 10.0
-    HF: 30000.0
-  total_compressibility_per_MPa: 1.0e-2
-
-fluid:
-  viscosity_cP: 1.0
+    SRV: 0.05
+    USRV: 0.05
+  # 第一压力通道 P12 对应的区域扩散系数。
+  D1:
+    HF: 1.0
+    SRV: 1.0e-7
+    USRV: 1.0e-9
+  # 第二压力通道 P13 对应的区域扩散系数，略低于 D1 以表示同位素/组分差异。
+  D2:
+    HF: 1.0
+    SRV: 9.95e-8
+    USRV: 9.9e-10
 
 well:
+  # 当前井模型为定井底流压 BHP 生产。
   type: "bhp"
   name: "producer"
+  # 井所在位置，位于右边界主裂缝端点。
   x: 360.0
   y: 75.0
+  # 只约束与裂缝连通的井网格，避免把非井附近网格强行设为 BHP。
   constrain_connected_fracture: true
+  # 井底流压随时间指数下降：p(t)=final+(initial-final)*exp(-decay*t)。
   target_mode: "exponential"
   initial_pressure_mpa: 25.0
   final_pressure_mpa: 3.0
   decay_rate_per_day: 0.018
 
 pressure:
+  # 两个压力通道：P12 表示 12CH4 对应压力，P13 表示 13CH4 对应压力。
   components: ["P12", "P13"]
+  # 初始 13C/12C 比值，用于构造初始 P13 或同位素相关计算。
   C13_C12: 0.010900084
+  # 压力归一化方式。component_affine 表示按组分做仿射归一化。
   normalization: "component_affine"
-  transmissibility_multipliers: [1.0, 1.0]
 
 time_grid:
-  times_days: [0.0, 0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 100.0, 200.0, 500.0, 750.0, 1000.0]
+  # E-PINN/FVM 求解时间向量。range 格式为 [起点, 终点, 步长]。
+  # [1, 1000, 2] 按 MATLAB/Python 语义生成 1, 3, 5, ..., 999；
+  # 由于瞬态求解必须包含初始状态，include_initial_zero=true 会自动在最前面补入 0。
+  time_vector:
+    range: [1, 1000, 2]
+    include_initial_zero: true
 
 model:
+  # E-PINN 模型结构。sparse 表示使用稀疏邻接/消息传递计算。
   architecture: "sparse"
+  # 输出压力通道数量，对应 pressure.components。
   output_dim: 2
   hidden_dim: 32
+  # 消息传递步数，控制邻域信息传播范围和计算成本。
   message_passing_steps: 2
+  # 自适应残差权重初值。
   adaptive_alpha_init: 0.1
+  # 锚点损失权重初值。
   anchor_weight_init: 0.01
+  # 门控/区域耦合权重初值。
   gate_weight_init: 0.5
 
 training:
-  epochs_per_step: 10000
+  # 原始 E-PINN 每个时间步的训练轮数。数值越大越慢，但残差可能更低。
+  epochs_per_step: 50
   learning_rate: 1.0e-3
+  # 网格单元可训练量的学习率倍率。
   cell_update_lr_multiplier: 10.0
+  # 梯度裁剪阈值，防止局部异常导致训练发散。
   grad_clip_norm: 10.0
+  # 裂缝区域残差损失权重。
   fracture_residual_weight: 50.0
+  # 裂缝通量连续性损失权重。
   fracture_flux_weight: 10.0
+  # 损失收敛容差。
   loss_tolerance: 1.0e-12
-  print_every: 100
+  # 训练日志打印间隔。
+  print_every: 50
+  # 是否保存每个时间步的结果。
   save_each_step: true
 
 evaluation:
-  times: [0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 100.0, 200.0, 500.0, 750.0, 1000.0]
+  # 原始 E-PINN/FVM 评价和绘图时间点。
+  time_vector:
+    range: [1, 1000, 1]
+    include_initial_zero: true
+
+plotting:
+  # Keep main.py plot/all lightweight. Use ["all"] to plot every available variable.
+  field_times_days: [0.0, 1.0, 10.0, 100.0, 500.0, 1000.0]
+  profile_times_days: [0.0, 1.0, 10.0, 100.0, 500.0, 1000.0]
+  field_variables: ["Ptotal"]
+  profile_variables: ["P12", "P13", "Ptotal"]
 
 direct_solver:
+  # 直接 FVM/EDFM 线性方程求解器参数。
   cg_rtol: 1.0e-9
   cg_atol: 1.0e-10
   cg_max_iter: 3000
 
+pod:
+  # POD-MLP 降阶代理模型总开关。
+  enabled: true
+
+  snapshot_generation:
+    # POD 训练快照来源。
+    # pinn 表示使用 main.py train 生成的 E-PINN 解；direct_fvm 表示用直接 FVM/EDFM 解作为监督数据。
+    source: "pinn"
+    # PINN 原始快照文件名。相对文件名默认从 outputs/ 下读取，即 outputs/snapshots.npz。
+    pinn_snapshot_file: "snapshots.npz"
+    # 复制/生成后的 POD 源快照文件名，保存到 outputs/pod/ 下，供 pod_train.py 使用。
+    snapshot_file: "pinn_snapshots.npz"
+    # 快照时间加密策略：早期压力变化快，因此 0-early_end_days 采样更密。
+    early_end_days: 30.0
+    # 中期采样截止时间。
+    middle_end_days: 200.0
+    # POD 默认最终训练时间。完整流程为 1000 天；main_POD.py 可临时覆盖为 20 天快速测试。
+    final_time_days: 1000.0
+    # 早期/中期/晚期快照点数。点数越多，POD 基越稳定，但直接求解和训练越慢。
+    early_points: 81
+    middle_points: 41
+    late_points: 41
+
+  decomposition:
+    # 是否在 POD 分解时排除井控网格。排除后井控压力由 BHP 公式单独装配。
+    exclude_well_cells: false
+    # POD 截断方式：energy 表示按累计能量阈值选取阶数。
+    rank_mode: "energy"
+    # 固定阶数模式或 main_POD.py 快速测试覆盖时使用的阶数。
+    fixed_rank: 30
+    # energy 模式下保留的累计能量比例。
+    energy_threshold: 0.999999
+    # 最大 POD 阶数，限制 MLP 输出维度和训练成本。
+    max_rank: 200
+    # 奇异值最小比例阈值，过小的模态会被丢弃以提升稳定性。
+    min_singular_ratio: 1.0e-12
+
+  split:
+    # POD 快照数据划分比例。
+    validation_fraction: 0.0
+    test_fraction: 0.0
+    seed: 2026
+    # 保证起点和终点进入训练集，降低端点外推风险。
+    keep_endpoints_in_train: true
+
+  mlp:
+    # POD-MLP 隐藏层宽度。输入为时间/BHP 特征，输出为 POD 模态系数。
+    hidden_dims: [64, 64]
+    activation: "silu"
+    # dropout 默认关闭，避免小样本快照下引入额外随机性。
+    dropout: 0.0
+
+  training:
+    # POD-MLP 最大训练轮数。main_POD.py 快速测试时可覆盖为较小数值。
+    epochs: 2000
+    batch_size: 32
+    learning_rate: 1.0e-3
+    weight_decay: 1.0e-6
+    # 早停耐心值：验证集长期无改进时提前停止。
+    patience: 300
+    min_delta: 1.0e-8
+    # 学习率调度器参数。
+    scheduler_patience: 80
+    scheduler_factor: 0.5
+    print_every: 100
+
+  inference:
+    # 是否允许预测超出 POD 训练快照时间范围。默认 false，避免无意外推。
+    allow_extrapolation: false
+    # 是否将 MLP 重构后的归一化压力裁剪到 [0,1]。默认不裁剪，便于暴露代理模型误差。
+    clip_normalized_pressure: false
+
+  files:
+    # POD 相关文件名，均相对于 outputs/pod/、outputs/checkpoints/pod/ 等目录。
+    basis_file: "pod_basis.npz"
+    checkpoint_file: "pod_mlp.pt"
+    prediction_file: "pod_predictions.npz"
+    evaluation_prediction_file: "pod_test_predictions.npz"
+    history_file: "pod_training_history.csv"
+    metrics_file: "pod_metrics_by_time.csv"
+    summary_file: "pod_metrics_summary.csv"
+    energy_file: "pod_energy.csv"
+
+gas_postprocessing:
+  # POD 产气量和甲烷碳同位素后处理总开关。
+  enabled: true
+
+  constants:
+    # 理想气体常数，单位 J/(mol*K)。
+    gas_constant_J_per_mol_K: 8.3145
+    # 标况摩尔体积，单位 m3/mol。
+    standard_molar_volume_m3_per_mol: 0.0224
+    # 储层温度，单位 K。
+    temperature_K: 333.15
+    # MPa 到 Pa 的换算系数。
+    pressure_MPa_to_Pa: 1.0e6
+    # 模型代表的裂缝/井段数量倍率，用于产气量放大。
+    model_count: 20.0
+    # 产气量缩放除数，用于把模型尺度结果换算到目标展示尺度。
+    production_scale_divisor: 1.0e4
+    # VPDB 标准 13C/12C 比值，用于计算 delta 值。
+    isotope_standard_ratio: 0.0112372
+    # 参考储层厚度。若网格 thickness_m 与该值不同，后处理会进行厚度修正。
+    reference_reservoir_thickness_m: 8.0
+
+  regions:
+    # 产气量统计区域顺序。表格和图中会按该顺序输出 HF、SRV、USRV。
+    order: ["HF", "SRV", "USRV"]
+
+  rate:
+    # 产气速率计算方法。finite_difference 表示由累产曲线数值求导。
+    method: "finite_difference"
+    # 计算同位素瞬时产出 delta 时，对极小轻组分速率做下限保护。
+    minimum_light_rate_m3_per_day: 1.0e-12
+    # 差分阶数。2 通常能在光滑曲线上获得更稳定的一阶导数。
+    edge_order: 2
+
+  inference:
+    # 当 pod_gas_postprocess 不读取已有 prediction_file、而是现场调用 POD 预测时，
+    # 使用以下时间范围生成气量和同位素曲线。
+    start_time_days: 0.0
+    end_time_days: 1000.0
+    number_of_times: 1001
+    # 气量后处理内部调用 POD 预测时是否允许超出训练时间范围。
+    allow_extrapolation: false
+
+  behavior:
+    # 是否在区域库存积分时排除井控网格。默认保留，使库存统计覆盖完整区域。
+    exclude_well_cells_from_inventory: false
+    # 是否把负累产强制截断为 0。默认 false，便于发现 POD 或数值误差。
+    clamp_negative_cumulative: false
+    # 是否强制累产曲线单调不减。默认 false，保留真实诊断信息。
+    enforce_monotonic_cumulative: false
+
+  files:
+    # 气量和同位素后处理输出文件名。
+    output_table: "pod_gas_production.csv"
+    output_archive: "pod_gas_production.npz"
+    cumulative_plot: "pod_cumulative_gas.png"
+    component_cumulative_plot: "pod_component_cumulative_gas.png"
+    rate_plot: "pod_gas_rate.png"
+    isotope_plot: "pod_isotope_delta.png"
+    regional_fraction_plot: "pod_regional_fraction.png"
+
 paths:
+  # 项目输出目录。各流程会在这些目录下继续创建 pod、figures、tables 等子目录。
   outputs: "outputs"
   checkpoints: "outputs/checkpoints"
   figures: "outputs/figures"

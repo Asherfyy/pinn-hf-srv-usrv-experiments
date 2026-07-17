@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import torch
 
+from .base_model import attach_base_model_from_config
 from .config import load_config
 from .geometry import REGION_HF, REGION_NAMES, REGION_SRV, REGION_USRV, Rect, ReservoirGeometry
 from .losses import compute_dirichlet_loss, compute_hf_junction_loss, compute_hf_main_link_loss, compute_hf_secondary_link_loss, compute_interface_loss, compute_pde_loss
@@ -38,6 +39,7 @@ def load_trained_model(config_path: str | Path, checkpoint_path: str | Path) -> 
     ensure_output_dirs(config)
     geometry = ReservoirGeometry(config["geometry"])
     model = PINNModel(config).to(device=device, dtype=dtype)
+    attach_base_model_from_config(model, config, device, dtype, config_path)
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     if checkpoint.get("project_version") != PROJECT_VERSION:
         raise ValueError(f"checkpoint project_version 不匹配: {checkpoint.get('project_version')} != {PROJECT_VERSION}")

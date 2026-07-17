@@ -95,12 +95,12 @@ model:  # 分区 MLP 网络结构设置。
   constraint_mode: "ic_hard"  # 初始条件硬约束模式，使 t=0 时 u12/u13 严格等于 1。
 
 training:  # 训练超参数设置。
-  epochs: 3500  # 默认目标总训练轮数，继续训练时也是目标总轮数而非额外轮数。
-  learning_rate: 7.0e-4  # Adam 学习率，过大易振荡，过小收敛慢。
+  epochs: 10000  # 默认目标总训练轮数，继续训练时也是目标总轮数而非额外轮数。
+  learning_rate: 1.0e-4  # Adam 学习率，过大易振荡，过小收敛慢。
   fixed_collocation_points: true  # 是否固定同一批 collocation 点训练，true 更便于比较 loss 曲线。
   resample_every: 300  # 若 fixed_collocation_points=false，则每隔多少轮重新采样一次。
   grad_clip_norm: 10.0  # 梯度裁剪阈值，用于防止二阶导 loss 导致梯度爆炸。
-  use_lbfgs: true  # 启用 LBFGS，用于从已有 checkpoint 继续做二阶优化微调。
+  use_lbfgs: false  # 启用 LBFGS，用于从已有 checkpoint 继续做二阶优化微调。
   lbfgs_lr: 1.0  # LBFGS 步长，配合 strong_wolfe 线搜索使用。
   lbfgs_max_iter: 20  # 每个外层 epoch 内 LBFGS 最多 closure 迭代次数。
   lbfgs_max_eval: 25  # 每个外层 epoch 内 LBFGS 最多函数评估次数。
@@ -114,15 +114,15 @@ training:  # 训练超参数设置。
   pressure_range_upper: 1.05  # 压力范围 soft penalty 上限，略高于初始无量纲压力 1。
 
 loss_weights:  # 各损失项权重设置，调参时主要看这里。
-  pde: 1.0  # PDE 残差 loss 权重，控制各区域满足扩散方程的强度。
+  pde: 10.0  # PDE 残差 loss 权重，控制各区域满足扩散方程的强度。
   dirichlet: 20.0  # 生产端 Dirichlet loss 权重，越大越贴近生产端压力目标。
-  neumann: 0.3  # 外边界 Neumann 无流 loss 权重，过大可能压制内部压力传播。
-  interface_pressure: 50.0  # 分区界面压力连续 loss 权重，越大界面压力跳跃越小。
-  interface_flux: 0.05  # 分区界面通量连续 loss 权重，HF 系数极大时不宜过大。
+  neumann: 10  # 外边界 Neumann 无流 loss 权重，过大可能压制内部压力传播。
+  interface_pressure: 5.0  # 分区界面压力连续 loss 权重，越大界面压力跳跃越小。
+  interface_flux: 30  # 分区界面通量连续 loss 权重，HF 系数极大时不宜过大。
   hf_main_link: 8.0  # 主裂缝高导流连通 loss 权重，用于让生产端压力影响整条主裂缝。
   hf_secondary_link: 6.0  # 次级细裂缝快速等压 loss 权重，用于让每条细裂缝沿长度方向快速同压。
-  hf_junction: 20.0  # 主裂缝和次级细裂缝交汇处强连通 loss 权重，用于压低交汇处压力跳跃。
-  pressure_range: 0.2  # 压力范围 soft penalty 权重，用于抑制负压和过高压力。
+  hf_junction: 5.0  # 主裂缝和次级细裂缝交汇处强连通 loss 权重，用于压低交汇处压力跳跃。
+  pressure_range: 0.0  # 压力范围 soft penalty 权重，用于抑制负压和过高压力。
 
 evaluation:  # 评估与绘图设置。
   times: [1.0, 10.0, 100.0, 1000.0]  # 输出云图和剖面的时间点，单位 day。

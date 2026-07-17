@@ -33,6 +33,9 @@ class ReservoirSampler:
         self.time_sampling_mode = str(self.cfg.get("time_sampling_mode", self.sampling_mode)).lower()
         if self.time_sampling_mode not in {"random", "uniform"}:
             raise ValueError(f"sampler.time_sampling_mode must be 'random' or 'uniform', got {self.time_sampling_mode!r}.")
+        self.time_pairing_mode = str(self.cfg.get("time_pairing_mode", "paired")).lower()
+        if self.time_pairing_mode not in {"paired", "cartesian"}:
+            raise ValueError(f"sampler.time_pairing_mode must be 'paired' or 'cartesian', got {self.time_pairing_mode!r}.")
 
     def _to_tensor(self, array: np.ndarray) -> torch.Tensor:
         return tensor_from_numpy(array, self.device, self.dtype)
@@ -118,6 +121,31 @@ class ReservoirSampler:
             self.rng.shuffle(xy, axis=0)
         return xy[:n]
 
+    def _sample_secondary_link_xy(self, line: FractureLine, n: int) -> np.ndarray:
+        if n <= 0:
+            return np.empty((0, 2), dtype=np.float64)
+        main = self.geometry.main_frac
+        if abs(line.x1 - line.x0) > abs(line.y1 - line.y0):
+            return self._sample_line_xy(line, n)
+
+        x = float(line.x0)
+        y_low = min(line.y0, line.y1)
+        y_high = max(line.y0, line.y1)
+        sub_lines: list[FractureLine] = []
+        if y_low < main.y_min:
+            sub_lines.append(FractureLine(x, y_low, x, min(main.y_min, y_high), line.aperture, f"{line.name}_lower"))
+        if y_high > main.y_max:
+            sub_lines.append(FractureLine(x, max(main.y_max, y_low), x, y_high, line.aperture, f"{line.name}_upper"))
+        if not sub_lines:
+            return self._sample_line_xy(line, n)
+
+        counts = self._allocate_counts(n, [segment.length for segment in sub_lines])
+        chunks = [self._sample_line_xy(segment, count) for segment, count in zip(sub_lines, counts) if count > 0]
+        xy = np.vstack(chunks) if chunks else np.empty((0, 2), dtype=np.float64)
+        if self.sampling_mode == "random" and xy.shape[0] > 0:
+            self.rng.shuffle(xy, axis=0)
+        return xy[:n]
+
     def sample_time(self, n: int) -> np.ndarray:
         if n <= 0:
             return np.empty((0, 1), dtype=np.float64)
@@ -139,6 +167,60 @@ class ReservoirSampler:
         if self.time_sampling_mode == "random":
             self.rng.shuffle(t, axis=0)
         return t
+
+    def _time_count(self, key: str) -> int:
+        value = int(self.cfg.get(key, self.cfg.get("n_time_collocation", 1)))
+        if value <= 0:
+            raise ValueError(f"sampler.{key} must be positive when time_pairing_mode='cartesian'.")
+        return value
+
+    def _xyt_from_xy_and_time(self, xy: np.ndarray, t: np.ndarray) -> np.ndarray:
+        if xy.shape[0] == 0 or t.shape[0] == 0:
+            return np.empty((0, 3), dtype=np.float64)
+        xy_rep = np.repeat(xy.astype(np.float64), t.shape[0], axis=0)
+        t_tile = np.tile(t.astype(np.float64), (xy.shape[0], 1))
+        return np.hstack([xy_rep, t_tile]).astype(np.float64)
+
+    def _repeat_per_time(self, values: np.ndarray, n_time: int) -> np.ndarray:
+        if values.shape[0] == 0 or n_time <= 0:
+            return values[:0]
+        return np.repeat(values, n_time, axis=0).astype(np.float64)
+
+    def _make_xyt(self, xy: np.ndarray, time_count_key: str = "n_time_collocation") -> torch.Tensor:
+        if self.time_pairing_mode == "paired":
+            t = self.sample_time(xy.shape[0])
+            return self._to_tensor(np.hstack([xy, t]).astype(np.float64))
+        t = self.sample_time(self._time_count(time_count_key))
+        return self._to_tensor(self._xyt_from_xy_and_time(xy, t))
+
+    def _make_xyt_with_normal(self, xy: np.ndarray, normal: np.ndarray, time_count_key: str) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.time_pairing_mode == "paired":
+            return self._make_xyt(xy, time_count_key), self._to_tensor(normal)
+        n_time = self._time_count(time_count_key)
+        t = self.sample_time(n_time)
+        xyt = self._xyt_from_xy_and_time(xy, t)
+        normal_rep = self._repeat_per_time(normal, n_time)
+        return self._to_tensor(xyt), self._to_tensor(normal_rep)
+
+    def _make_paired_xyt(
+        self,
+        first_xy: np.ndarray,
+        second_xy: np.ndarray,
+        time_count_key: str,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if first_xy.shape != second_xy.shape:
+            raise ValueError("Paired spatial arrays must have the same shape.")
+        if self.time_pairing_mode == "paired":
+            t = self.sample_time(first_xy.shape[0])
+            return (
+                self._to_tensor(np.hstack([first_xy, t]).astype(np.float64)),
+                self._to_tensor(np.hstack([second_xy, t]).astype(np.float64)),
+            )
+        t = self.sample_time(self._time_count(time_count_key))
+        return (
+            self._to_tensor(self._xyt_from_xy_and_time(first_xy, t)),
+            self._to_tensor(self._xyt_from_xy_and_time(second_xy, t)),
+        )
 
     def _sample_region_xy(self, n: int, rect: Rect, target_region: int) -> np.ndarray:
         if n <= 0:
@@ -197,10 +279,6 @@ class ReservoirSampler:
             "usrv": self._sample_from_rects_for_region(rects, n_usrv, REGION_USRV),
         }
 
-    def _make_xyt(self, xy: np.ndarray) -> torch.Tensor:
-        t = self.sample_time(xy.shape[0])
-        return self._to_tensor(np.hstack([xy, t]).astype(np.float64))
-
     def sample_pde_points(self) -> dict[str, torch.Tensor]:
         hf_xy = self._sample_hf_xy(int(self.cfg["n_pde_hf"]))
         srv_xy = self._sample_region_xy(int(self.cfg["n_pde_srv"]), self.geometry.srv_bg, REGION_SRV)
@@ -209,20 +287,24 @@ class ReservoirSampler:
         near_srv_usrv = self.sample_near_srv_usrv_points()
         srv_xy = np.vstack([srv_xy, near_hf["srv"], near_srv_usrv["srv"]])
         usrv_xy = np.vstack([usrv_xy, near_srv_usrv["usrv"]])
-        return {"hf": self._make_xyt(hf_xy), "srv": self._make_xyt(srv_xy), "usrv": self._make_xyt(usrv_xy)}
+        return {
+            "hf": self._make_xyt(hf_xy, "n_time_pde"),
+            "srv": self._make_xyt(srv_xy, "n_time_pde"),
+            "usrv": self._make_xyt(usrv_xy, "n_time_pde"),
+        }
 
     def sample_dirichlet_boundary_points(self) -> dict[str, torch.Tensor]:
         n = int(self.cfg["n_dirichlet"])
         xw, yw = self.geometry.dirichlet_point()
         xy = np.column_stack([np.full(n, xw, dtype=np.float64), np.full(n, yw, dtype=np.float64)])
-        return {"xyt": self._make_xyt(xy)}
+        return {"xyt": self._make_xyt(xy, "n_time_boundary")}
 
     def sample_hf_main_link_points(self) -> dict[str, torch.Tensor]:
         n = int(self.cfg.get("n_hf_main_link", 0))
         if n <= 0:
             return {"xyt": self._to_tensor(np.empty((0, 3), dtype=np.float64))}
         xy = self._sample_line_xy(self.geometry.hf_lines[0], n)
-        return {"xyt": self._make_xyt(xy)}
+        return {"xyt": self._make_xyt(xy, "n_time_link")}
 
     def sample_hf_secondary_link_points(self) -> dict[str, torch.Tensor]:
         n = int(self.cfg.get("n_hf_secondary_link", 0))
@@ -234,21 +316,21 @@ class ReservoirSampler:
         main = self.geometry.hf_lines[0]
         y_junction = main.y0
         counts = self._allocate_counts(n, [line.length for line in secondary_lines])
-        xyt_chunks: list[np.ndarray] = []
-        junction_chunks: list[np.ndarray] = []
+        xy_chunks: list[np.ndarray] = []
+        junction_xy_chunks: list[np.ndarray] = []
         for line, count in zip(secondary_lines, counts):
             if count <= 0:
                 continue
-            xy = self._sample_line_xy(line, count)
-            t = self.sample_time(count)
-            xyt_chunks.append(np.hstack([xy, t]).astype(np.float64))
+            xy = self._sample_secondary_link_xy(line, count)
             junction_xy = np.column_stack([np.full(count, line.x0, dtype=np.float64), np.full(count, y_junction, dtype=np.float64)])
-            junction_chunks.append(np.hstack([junction_xy, t]).astype(np.float64))
+            xy_chunks.append(xy.astype(np.float64))
+            junction_xy_chunks.append(junction_xy.astype(np.float64))
 
-        xyt = np.vstack(xyt_chunks) if xyt_chunks else np.empty((0, 3), dtype=np.float64)
-        junction_xyt = np.vstack(junction_chunks) if junction_chunks else np.empty((0, 3), dtype=np.float64)
-        order = self.rng.permutation(xyt.shape[0]) if self.sampling_mode == "random" and xyt.shape[0] > 0 else np.arange(xyt.shape[0])
-        return {"xyt": self._to_tensor(xyt[order]), "junction_xyt": self._to_tensor(junction_xyt[order])}
+        xy_all = np.vstack(xy_chunks) if xy_chunks else np.empty((0, 2), dtype=np.float64)
+        junction_xy_all = np.vstack(junction_xy_chunks) if junction_xy_chunks else np.empty((0, 2), dtype=np.float64)
+        order = self.rng.permutation(xy_all.shape[0]) if self.sampling_mode == "random" and xy_all.shape[0] > 0 else np.arange(xy_all.shape[0])
+        xyt, junction_xyt = self._make_paired_xyt(xy_all[order], junction_xy_all[order], "n_time_link")
+        return {"xyt": xyt, "junction_xyt": junction_xyt}
 
     def sample_hf_junction_pair_points(self) -> dict[str, torch.Tensor]:
         n = int(self.cfg.get("n_hf_junction", 0))
@@ -261,12 +343,11 @@ class ReservoirSampler:
         y_center = main.y0
         offset = float(self.cfg.get("junction_offset_m", 0.05))
         counts = self._allocate_counts(n, [line.length for line in secondary_lines])
-        main_chunks: list[np.ndarray] = []
-        secondary_chunks: list[np.ndarray] = []
+        main_xy_chunks: list[np.ndarray] = []
+        secondary_xy_chunks: list[np.ndarray] = []
         for line, count in zip(secondary_lines, counts):
             if count <= 0:
                 continue
-            t = self.sample_time(count)
             if self.sampling_mode == "uniform":
                 idx = np.arange(count, dtype=np.int64).reshape(-1, 1)
                 x_sign = np.where(idx % 2 == 0, -1.0, 1.0).astype(np.float64)
@@ -280,13 +361,14 @@ class ReservoirSampler:
             main_y = np.full((count, 1), y_center, dtype=np.float64)
             sec_x = np.full((count, 1), x_center, dtype=np.float64)
             sec_y = np.clip(y_center + y_sign * offset, min(line.y0, line.y1), max(line.y0, line.y1))
-            main_chunks.append(np.hstack([main_x, main_y, t]).astype(np.float64))
-            secondary_chunks.append(np.hstack([sec_x, sec_y, t]).astype(np.float64))
+            main_xy_chunks.append(np.hstack([main_x, main_y]).astype(np.float64))
+            secondary_xy_chunks.append(np.hstack([sec_x, sec_y]).astype(np.float64))
 
-        main_xyt = np.vstack(main_chunks) if main_chunks else np.empty((0, 3), dtype=np.float64)
-        secondary_xyt = np.vstack(secondary_chunks) if secondary_chunks else np.empty((0, 3), dtype=np.float64)
-        order = self.rng.permutation(main_xyt.shape[0]) if self.sampling_mode == "random" and main_xyt.shape[0] > 0 else np.arange(main_xyt.shape[0])
-        return {"main_xyt": self._to_tensor(main_xyt[order]), "secondary_xyt": self._to_tensor(secondary_xyt[order])}
+        main_xy = np.vstack(main_xy_chunks) if main_xy_chunks else np.empty((0, 2), dtype=np.float64)
+        secondary_xy = np.vstack(secondary_xy_chunks) if secondary_xy_chunks else np.empty((0, 2), dtype=np.float64)
+        order = self.rng.permutation(main_xy.shape[0]) if self.sampling_mode == "random" and main_xy.shape[0] > 0 else np.arange(main_xy.shape[0])
+        main_xyt, secondary_xyt = self._make_paired_xyt(main_xy[order], secondary_xy[order], "n_time_link")
+        return {"main_xyt": main_xyt, "secondary_xyt": secondary_xyt}
 
     def _sample_right_neumann_y(self, n: int) -> np.ndarray:
         xw, yw = self.geometry.dirichlet_point()
@@ -341,7 +423,8 @@ class ReservoirSampler:
             normals.append(np.tile([[0.0, 1.0]], (counts[3], 1)))
         xy = np.vstack(chunks).astype(np.float64)
         normal = np.vstack(normals).astype(np.float64)
-        return {"xyt": self._make_xyt(xy), "normal": self._to_tensor(normal)}
+        xyt, normal_tensor = self._make_xyt_with_normal(xy, normal, "n_time_boundary")
+        return {"xyt": xyt, "normal": normal_tensor}
 
     def _sample_segments(
         self,
@@ -376,7 +459,8 @@ class ReservoirSampler:
             order = self.rng.permutation(xy.shape[0])
             xy = xy[order]
             normal = normal[order]
-        return {"xyt": self._make_xyt(xy), "normal": self._to_tensor(normal)}
+        xyt, normal_tensor = self._make_xyt_with_normal(xy, normal, "n_time_interface")
+        return {"xyt": xyt, "normal": normal_tensor}
 
     def sample_hf_srv_interface_points(self) -> dict[str, torch.Tensor]:
         return self._sample_segments(int(self.cfg["n_interface_hf_srv"]), self.geometry.hf_srv_interface_segments())

@@ -13,7 +13,7 @@ from src.sampler import ReservoirSampler
 from src.utils import get_torch_dtype
 
 
-def make_sampler(seed: int = 2026, sampling_mode: str = "random") -> tuple[dict, ReservoirGeometry, ReservoirSampler]:
+def make_sampler(seed: int = 2026, sampling_mode: str = "random", time_pairing_mode: str = "cartesian") -> tuple[dict, ReservoirGeometry, ReservoirSampler]:
     config = copy.deepcopy(load_config(Path(__file__).resolve().parents[1] / "config" / "default.yaml"))
     config["sampler"].update(
         {
@@ -32,6 +32,11 @@ def make_sampler(seed: int = 2026, sampling_mode: str = "random") -> tuple[dict,
             "junction_offset_m": 0.001,
             "sampling_mode": sampling_mode,
             "time_sampling_mode": sampling_mode,
+            "time_pairing_mode": time_pairing_mode,
+            "n_time_pde": 4,
+            "n_time_boundary": 3,
+            "n_time_interface": 5,
+            "n_time_link": 4,
         }
     )
     geom = ReservoirGeometry(config["geometry"])
@@ -50,6 +55,27 @@ def test_pde_sampling_regions() -> None:
     assert np.all(region_ids(geom, pde["hf"]) == REGION_HF)
     assert np.all(region_ids(geom, pde["srv"]) == REGION_SRV)
     assert np.all(region_ids(geom, pde["usrv"]) == REGION_USRV)
+
+
+def test_cartesian_time_product_shapes() -> None:
+    config, _geom, sampler = make_sampler()
+    pde = sampler.sample_pde_points()
+    n_time_pde = int(config["sampler"]["n_time_pde"])
+    expected_srv_space = int(config["sampler"]["n_pde_srv"]) + int(config["sampler"]["n_near_hf_srv"]) + int(config["sampler"]["n_near_srv_usrv"]) // 2
+    expected_usrv_space = int(config["sampler"]["n_pde_usrv"]) + int(config["sampler"]["n_near_srv_usrv"]) - int(config["sampler"]["n_near_srv_usrv"]) // 2
+    assert pde["hf"].shape == (int(config["sampler"]["n_pde_hf"]) * n_time_pde, 3)
+    assert pde["srv"].shape == (expected_srv_space * n_time_pde, 3)
+    assert pde["usrv"].shape == (expected_usrv_space * n_time_pde, 3)
+
+    dirichlet = sampler.sample_dirichlet_boundary_points()
+    assert dirichlet["xyt"].shape == (int(config["sampler"]["n_dirichlet"]) * int(config["sampler"]["n_time_boundary"]), 3)
+
+    interface = sampler.sample_hf_srv_interface_points()
+    assert interface["xyt"].shape[0] == interface["normal"].shape[0]
+
+    secondary = sampler.sample_hf_secondary_link_points()
+    assert secondary["xyt"].shape == secondary["junction_xyt"].shape
+    assert torch.allclose(secondary["xyt"][:, 2], secondary["junction_xyt"][:, 2])
 
 
 def test_near_points_are_merged_into_correct_regions() -> None:

@@ -22,6 +22,7 @@ from .utils import ensure_output_dirs
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Plot v11 pressure fields.")
     parser.add_argument("--config", type=str, default="config/default.yaml")
+    parser.add_argument("--snapshot-file", type=str, default=None)
     return parser.parse_args()
 
 
@@ -34,6 +35,29 @@ def _time_indices(times_available: np.ndarray, requested: list[float]) -> list[i
     return indices
 
 
+def _configured_times(config: dict[str, Any]) -> list[float]:
+    plotting = config.get("plotting", {})
+    values = plotting.get("field_times_days", plotting.get("times_days", config["evaluation"]["times"]))
+    return [float(value) for value in values]
+
+
+def _select_variables(variables: dict[str, np.ndarray], requested: list[str] | None) -> dict[str, np.ndarray]:
+    if not requested or any(str(value).lower() == "all" for value in requested):
+        return variables
+    selected: dict[str, np.ndarray] = {}
+    missing: list[str] = []
+    for raw_name in requested:
+        name = str(raw_name)
+        if name in variables:
+            selected[name] = variables[name]
+        else:
+            missing.append(name)
+    if missing:
+        available = ", ".join(variables.keys())
+        raise ValueError(f"Unknown plot variable(s): {missing}. Available: {available}.")
+    return selected
+
+
 def plot_field(
     config: dict[str, Any],
     geometry: ReservoirGeometry,
@@ -41,6 +65,7 @@ def plot_field(
     time_index: int,
     values: np.ndarray,
     variable_name: str,
+    output_dir: Path | None = None,
 ) -> None:
     matrix_count = int(np.asarray(snapshots["matrix_cell_count"]).item())
     nx = int(np.asarray(snapshots.get("nx", config["grid"]["nx"])).item())
@@ -59,7 +84,8 @@ def plot_field(
     ax.set_ylabel("y (m)")
     ax.set_aspect("equal", adjustable="box")
     fig.colorbar(mesh, ax=ax, label="MPa")
-    out = Path(config["paths"]["figures"]) / f"field_{variable_name}_t{time_value:g}.png"
+    out_dir = output_dir if output_dir is not None else Path(config["paths"]["figures"])
+    out = out_dir / f"field_{variable_name}_t{time_value:g}.png"
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=180)
     plt.close(fig)
@@ -76,7 +102,9 @@ def main() -> None:
     config = load_config(args.config)
     ensure_output_dirs(config)
     geometry = ReservoirGeometry(config["geometry"])
-    snapshots = load_snapshots(config)
+    snapshots = load_snapshots(config, args.snapshot_file)
+    output_dir = Path(config["paths"]["figures"]) if args.snapshot_file is None else Path(config["paths"]["figures"]) / "pod"
+    output_dir.mkdir(parents=True, exist_ok=True)
     pressure = snapshots["pressure_mpa"]
     if pressure.ndim == 3:
         component_names = [str(value) for value in snapshots.get("component_names", np.asarray(config["pressure"]["components"]))]
@@ -84,10 +112,11 @@ def main() -> None:
         variables["Ptotal"] = np.sum(pressure, axis=2)
     else:
         variables = {"pressure": pressure}
-    requested = [float(value) for value in config["evaluation"]["times"]]
+    requested = _configured_times(config)
+    variables = _select_variables(variables, config.get("plotting", {}).get("field_variables"))
     for idx in _time_indices(snapshots["times_days"], requested):
         for variable_name, values_by_time in variables.items():
-            plot_field(config, geometry, snapshots, idx, values_by_time[idx], variable_name)
+            plot_field(config, geometry, snapshots, idx, values_by_time[idx], variable_name, output_dir)
 
 
 if __name__ == "__main__":

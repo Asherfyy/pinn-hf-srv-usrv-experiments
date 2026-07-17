@@ -62,6 +62,11 @@ boundary:
 sampler:
   sampling_mode: "random"
   time_sampling_mode: "random"
+  time_pairing_mode: "paired" # "paired" or "cartesian"
+  n_time_pde: 1000
+  n_time_boundary: 1000
+  n_time_interface: 1000
+  n_time_link: 1000
   n_pde_hf: 1000
   n_pde_srv: 1000
   n_pde_usrv: 1000
@@ -94,15 +99,18 @@ model:
     SRV: 5
     USRV: 5
   region_hidden_units:
-    HF: 96
-    SRV: 128
-    USRV: 128
+    HF: 32
+    SRV: 32
+    USRV: 32
   activation: "tanh"
-  constraint_mode: "ic_hard"
+  constraint_mode: "ic_base_correction" # "ic_hard" or "ic_base_correction"
+  base_checkpoint: null
+  base_time_lag_days: 1.0
+  correction_envelope_power: 1.0
 
 training:
-  epochs: 2000
-  learning_rate: 7.0e-4
+  epochs: 1000
+  learning_rate: 1.0e-3
   fixed_collocation_points: false
   resample_every: 1
   grad_clip_norm: 10.0
@@ -120,14 +128,14 @@ training:
   pressure_range_upper: 1.05
 
 loss_weights:
-  pde: 1.0
+  pde: 5.0
   dirichlet: 20.0
-  neumann: 0.3
-  interface_pressure: 50.0
-  interface_flux: 0.05
+  neumann: 1
+  interface_pressure: 1.0
+  interface_flux: 20
   hf_main_link: 8.0
   hf_secondary_link: 6.0
-  hf_junction: 20.0
+  hf_junction: 10.0
   pressure_range: 0.2
 
 evaluation:

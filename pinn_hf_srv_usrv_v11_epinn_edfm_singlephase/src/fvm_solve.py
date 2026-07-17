@@ -9,7 +9,8 @@ from typing import Any
 import numpy as np
 
 from .config import load_config
-from .edfm_grid import EdfmGrid, build_edfm_grid
+from .edfm_grid import EdfmGrid, build_edfm_grid, connection_transmissibility_matrix
+from .gas_metrics import build_snapshot_gas_metadata
 from .geometry import ReservoirGeometry
 from .utils import PROJECT_VERSION, bhp_component_target_mpa, bhp_target_mpa, ensure_output_dirs, pressure_component_affine_parameters, save_csv
 
@@ -36,20 +37,20 @@ def main() -> None:
 def solve_direct(grid: EdfmGrid, config: dict[str, Any], times: list[float]) -> tuple[np.ndarray, list[dict[str, float]]]:
     if len(times) < 2:
         raise ValueError("At least two time values are required.")
-    storage = grid.cell_phi * float(config["rock"]["total_compressibility_per_MPa"]) * grid.cell_volume
+    storage = grid.cell_storage
     well_cells = np.asarray(grid.well_cells, dtype=np.int64)
     free_cells = np.setdiff1d(np.arange(grid.num_cells, dtype=np.int64), well_cells, assume_unique=False)
     free_pos = np.full((grid.num_cells,), -1, dtype=np.int64)
     free_pos[free_cells] = np.arange(free_cells.size, dtype=np.int64)
     conn_i = np.asarray([connection.i for connection in grid.connections], dtype=np.int64)
     conn_j = np.asarray([connection.j for connection in grid.connections], dtype=np.int64)
-    transmissibility = np.asarray([connection.transmissibility for connection in grid.connections], dtype=np.float64)
-    multipliers = np.asarray(config["pressure"].get("transmissibility_multipliers", [1.0]), dtype=np.float64)
-    row_scale = np.zeros((grid.num_cells,), dtype=np.float64)
-    np.add.at(row_scale, conn_i, transmissibility)
-    np.add.at(row_scale, conn_j, transmissibility)
     pressure_params = pressure_component_affine_parameters(config)
     component_count = len(config["pressure"]["components"])
+    transmissibility = connection_transmissibility_matrix(grid.connections, component_count)
+    row_scale = np.zeros((grid.num_cells, component_count), dtype=np.float64)
+    if transmissibility.size > 0:
+        np.add.at(row_scale, conn_i, transmissibility)
+        np.add.at(row_scale, conn_j, transmissibility)
     pressure = np.tile(pressure_params["initial_mpa"].reshape(1, component_count), (grid.num_cells, 1)).astype(np.float64)
     pressure[well_cells] = bhp_component_target_mpa(times[0], config)
     snapshots = [pressure.copy()]
@@ -69,8 +70,8 @@ def solve_direct(grid: EdfmGrid, config: dict[str, Any], times: list[float]) -> 
         iteration_max = 0
         residual_max = 0.0
         for component in range(component_count):
-            transmissibility_component = transmissibility * float(multipliers[component])
-            row_scale_component = row_scale * float(multipliers[component])
+            transmissibility_component = transmissibility[:, component]
+            row_scale_component = row_scale[:, component]
             rhs = _reduced_rhs(storage_over_dt, pressure[:, component], free_cells, free_pos, well_cells, conn_i, conn_j, transmissibility_component, float(bhp[component]))
             pressure_free, iterations, residual_norm = _pcg_solve(
                 x0=pressure[free_cells, component],
@@ -206,6 +207,7 @@ def _save_snapshots(config: dict[str, Any], grid: EdfmGrid, times: list[float], 
         fracture_start=np.asarray([segment.start for segment in grid.fracture_segments], dtype=np.float64),
         fracture_end=np.asarray([segment.end for segment in grid.fracture_segments], dtype=np.float64),
         fracture_name=np.asarray([segment.name for segment in grid.fracture_segments]),
+        **build_snapshot_gas_metadata(config, grid),
         solver=np.asarray("direct_fvm_edfm"),
         project_version=np.asarray(PROJECT_VERSION),
     )
@@ -215,12 +217,12 @@ def _save_snapshots(config: dict[str, Any], grid: EdfmGrid, times: list[float], 
 def _well_row(grid: EdfmGrid, time_days: float, pressure: np.ndarray, config: dict[str, Any]) -> dict[str, float]:
     well_cells = {int(value) for value in grid.well_cells.tolist()}
     rate = np.zeros((pressure.shape[1],), dtype=np.float64)
-    multipliers = np.asarray(config["pressure"].get("transmissibility_multipliers", [1.0] * rate.size), dtype=np.float64)
     for connection in grid.connections:
+        transmissibility = np.asarray(connection.component_transmissibility or (connection.transmissibility,) * rate.size, dtype=np.float64)
         if connection.i in well_cells and connection.j not in well_cells:
-            rate += connection.transmissibility * multipliers * (pressure[connection.j] - pressure[connection.i])
+            rate += transmissibility * (pressure[connection.j] - pressure[connection.i])
         elif connection.j in well_cells and connection.i not in well_cells:
-            rate += connection.transmissibility * multipliers * (pressure[connection.i] - pressure[connection.j])
+            rate += transmissibility * (pressure[connection.i] - pressure[connection.j])
     row = {
         "time_days": float(time_days),
         "bhp_target_mpa": float(bhp_target_mpa(time_days, config["well"])),

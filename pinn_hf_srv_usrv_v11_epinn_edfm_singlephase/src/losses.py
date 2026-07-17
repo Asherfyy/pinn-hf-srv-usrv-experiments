@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from .edfm_grid import EdfmGrid
+from .edfm_grid import EdfmGrid, connection_transmissibility_matrix
 from .model import EPINNModel
 from .utils import pressure_hat_to_mpa
 
@@ -21,7 +21,6 @@ class FvmOperators:
     ff_conn_j: torch.Tensor
     ff_transmissibility: torch.Tensor
     transmissibility: torch.Tensor
-    component_multipliers: torch.Tensor
     storage: torch.Tensor
     row_scale: torch.Tensor
     residual_weight: torch.Tensor
@@ -33,17 +32,17 @@ class FvmOperators:
 def operators_from_grid(grid: EdfmGrid, config: dict[str, Any], device: torch.device, dtype: torch.dtype) -> FvmOperators:
     conn_i = torch.as_tensor([conn.i for conn in grid.connections], dtype=torch.long, device=device)
     conn_j = torch.as_tensor([conn.j for conn in grid.connections], dtype=torch.long, device=device)
-    transmissibility = torch.as_tensor([conn.transmissibility for conn in grid.connections], dtype=dtype, device=device)
-    multipliers = torch.as_tensor(config["pressure"].get("transmissibility_multipliers", [1.0]), dtype=dtype, device=device)
+    component_count = len(config["pressure"]["components"])
+    transmissibility = torch.as_tensor(connection_transmissibility_matrix(grid.connections, component_count), dtype=dtype, device=device)
     ff_indices = [idx for idx, conn in enumerate(grid.connections) if conn.kind == "ff"]
     ff_conn_i = torch.as_tensor([grid.connections[idx].i for idx in ff_indices], dtype=torch.long, device=device)
     ff_conn_j = torch.as_tensor([grid.connections[idx].j for idx in ff_indices], dtype=torch.long, device=device)
-    ff_transmissibility = torch.as_tensor([grid.connections[idx].transmissibility for idx in ff_indices], dtype=dtype, device=device)
-    storage_np = grid.cell_phi * float(config["rock"]["total_compressibility_per_MPa"]) * grid.cell_volume
-    storage = torch.as_tensor(storage_np, dtype=dtype, device=device)
-    row_scale = torch.zeros_like(storage)
-    row_scale.index_add_(0, conn_i, transmissibility)
-    row_scale.index_add_(0, conn_j, transmissibility)
+    ff_transmissibility = transmissibility[ff_indices] if ff_indices else torch.empty((0, component_count), dtype=dtype, device=device)
+    storage = torch.as_tensor(grid.cell_storage, dtype=dtype, device=device)
+    row_scale = torch.zeros((grid.num_cells, component_count), dtype=dtype, device=device)
+    if transmissibility.numel() > 0:
+        row_scale.index_add_(0, conn_i, transmissibility)
+        row_scale.index_add_(0, conn_j, transmissibility)
     residual_weight_np = np.ones((grid.num_cells,), dtype=np.float64)
     residual_weight_np[grid.cell_region.astype(str) == "HF"] = float(config["training"].get("fracture_residual_weight", 1.0))
     residual_weight = torch.as_tensor(residual_weight_np, dtype=dtype, device=device)
@@ -58,7 +57,6 @@ def operators_from_grid(grid: EdfmGrid, config: dict[str, Any], device: torch.de
         ff_conn_j=ff_conn_j,
         ff_transmissibility=ff_transmissibility,
         transmissibility=transmissibility,
-        component_multipliers=multipliers,
         storage=storage,
         row_scale=row_scale,
         residual_weight=residual_weight,
@@ -98,10 +96,10 @@ def singlephase_residual(
     residual = operators.storage.view(-1, 1) * (pressure_pred_mpa - pressure_prev_mpa) / float(dt_days)
     if operators.transmissibility.numel() > 0:
         delta = pressure_pred_mpa[operators.conn_j] - pressure_pred_mpa[operators.conn_i]
-        multipliers = operators.component_multipliers.to(device=delta.device, dtype=delta.dtype)
-        if multipliers.numel() != delta.shape[1]:
-            raise ValueError(f"component multiplier count {multipliers.numel()} does not match pressure components {delta.shape[1]}.")
-        flux = operators.transmissibility.view(-1, 1) * delta * multipliers.view(1, -1)
+        transmissibility = operators.transmissibility.to(device=delta.device, dtype=delta.dtype)
+        if transmissibility.shape[1] != delta.shape[1]:
+            raise ValueError(f"connection transmissibility component count {transmissibility.shape[1]} does not match pressure components {delta.shape[1]}.")
+        flux = transmissibility * delta
         residual.index_add_(0, operators.conn_i, -flux)
         residual.index_add_(0, operators.conn_j, flux)
     return residual.view(-1) if squeezed else residual
@@ -121,8 +119,7 @@ def compute_step_loss(
     pred_mpa = apply_bhp_pressure_to_cells(pred_mpa_raw, operators.well_cells, bhp_mpa)
     residual = singlephase_residual(pred_mpa, pressure_prev_mpa, operators, dt_days)
     free_residual = residual[operators.free_cells]
-    component_multipliers = operators.component_multipliers.to(device=pred_mpa.device, dtype=pred_mpa.dtype)
-    implicit_scale = operators.storage.view(-1, 1) / float(dt_days) + operators.row_scale.view(-1, 1) * component_multipliers.view(1, -1)
+    implicit_scale = operators.storage.view(-1, 1) / float(dt_days) + operators.row_scale.to(device=pred_mpa.device, dtype=pred_mpa.dtype)
     free_scale = implicit_scale[operators.free_cells].clamp_min(torch.finfo(implicit_scale.dtype).eps)
     free_residual_scaled = free_residual / free_scale
     free_weight = operators.residual_weight[operators.free_cells].view(-1, 1)
@@ -133,7 +130,7 @@ def compute_step_loss(
         pressure_scale = float(config["well"]["initial_pressure_mpa"]) - float(config["well"]["final_pressure_mpa"])
         ff_delta = (pred_mpa[operators.ff_conn_i] - pred_mpa[operators.ff_conn_j]) / max(pressure_scale, 1.0e-12)
         ff_weight = operators.ff_transmissibility / operators.ff_transmissibility.mean().clamp_min(torch.finfo(operators.ff_transmissibility.dtype).eps)
-        fracture_flux_loss = torch.mean(ff_weight.view(-1, 1) * ff_delta**2)
+        fracture_flux_loss = torch.mean(ff_weight * ff_delta**2)
         loss = loss + fracture_flux_weight * fracture_flux_loss
     diagnostics = {
         "loss_total": loss,

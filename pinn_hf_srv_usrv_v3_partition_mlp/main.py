@@ -17,7 +17,7 @@ DEFAULT_CHECKPOINT_PATH = PROJECT_ROOT / "outputs" / "checkpoints" / "final.pt"
 # IDE 直接运行参数区。
 # =========================
 # 可选模式："test" 只跑测试；"train" 训练；"evaluate" 生成诊断表；"plot" 绘图；"all" 依次测试、训练、评估、绘图。
-IDE_MODE = "train"
+IDE_MODE = "all"
 
 # 是否从已有 checkpoint 继续训练；False 表示从头随机初始化训练。
 IDE_RESUME_FROM_CHECKPOINT = True

@@ -16,6 +16,7 @@ from tqdm import tqdm
 
 from .config import load_config
 from .edfm_grid import EdfmGrid, build_edfm_grid
+from .gas_metrics import build_snapshot_gas_metadata
 from .geometry import ReservoirGeometry
 from .losses import apply_bhp_pressure_to_cells, compute_step_loss, operators_from_grid
 from .model import EPINNModel
@@ -228,6 +229,7 @@ def _save_snapshots(config: dict[str, Any], grid: EdfmGrid, times: list[float], 
         fracture_start=np.asarray([segment.start for segment in grid.fracture_segments], dtype=np.float64),
         fracture_end=np.asarray([segment.end for segment in grid.fracture_segments], dtype=np.float64),
         fracture_name=np.asarray([segment.name for segment in grid.fracture_segments]),
+        **build_snapshot_gas_metadata(config, grid),
         solver=np.asarray("sparse_epinn_train"),
         project_version=np.asarray(PROJECT_VERSION),
     )
@@ -237,12 +239,12 @@ def _save_snapshots(config: dict[str, Any], grid: EdfmGrid, times: list[float], 
 def _well_row(grid: EdfmGrid, time_days: float, pressure: np.ndarray, config: dict[str, Any]) -> dict[str, float]:
     well_cells = {int(value) for value in grid.well_cells.tolist()}
     rate = np.zeros((pressure.shape[1],), dtype=np.float64) if pressure.ndim == 2 else np.zeros((1,), dtype=np.float64)
-    multipliers = np.asarray(config["pressure"].get("transmissibility_multipliers", [1.0] * rate.size), dtype=np.float64)
     for conn in grid.connections:
+        transmissibility = np.asarray(conn.component_transmissibility or (conn.transmissibility,) * rate.size, dtype=np.float64)
         if conn.i in well_cells and conn.j not in well_cells:
-            rate += conn.transmissibility * multipliers * (pressure[conn.j] - pressure[conn.i])
+            rate += transmissibility * (pressure[conn.j] - pressure[conn.i])
         elif conn.j in well_cells and conn.i not in well_cells:
-            rate += conn.transmissibility * multipliers * (pressure[conn.i] - pressure[conn.j])
+            rate += transmissibility * (pressure[conn.i] - pressure[conn.j])
     row = {
         "time_days": float(time_days),
         "bhp_target_mpa": float(bhp_target_mpa(time_days, config["well"])),

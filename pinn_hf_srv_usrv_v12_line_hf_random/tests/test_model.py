@@ -10,7 +10,7 @@ from src.model import PINNModel
 from src.utils import get_torch_dtype
 
 
-def test_model_input_output_and_ic_hard() -> None:
+def test_model_input_output_and_initial_condition() -> None:
     config = load_config(Path(__file__).resolve().parents[1] / "config" / "default.yaml")
     dtype = get_torch_dtype(config["runtime"]["dtype"])
     model = PINNModel(config).to(dtype=dtype)
@@ -22,19 +22,22 @@ def test_model_input_output_and_ic_hard() -> None:
     assert torch.max(torch.abs(pred[0:1] - torch.ones_like(pred[0:1]))).item() < 1.0e-12
 
 
-def test_model_uses_partitioned_subnets_and_default_coordinate_features() -> None:
+def test_model_uses_partitioned_subnets_and_configured_features() -> None:
     config = load_config(Path(__file__).resolve().parents[1] / "config" / "default.yaml")
     dtype = get_torch_dtype(config["runtime"]["dtype"])
     model = PINNModel(config)
     assert set(model.subnets.keys()) == {"HF", "SRV", "USRV"}
-    assert int(config["model"]["subnet_input_dim"]) == 3
-    assert model.subnets["HF"].net[0].in_features == 3
+    expected_dim = int(config["model"]["subnet_input_dim"])
+    assert expected_dim in {3, 5}
+    assert model.subnets["HF"].net[0].in_features == expected_dim
     assert hasattr(model, "geometry")
     assert not hasattr(model, "adf_dirichlet_torch")
     xyt = torch.tensor([[250.0, 75.0, 10.0]], dtype=dtype)
     z = model.normalize_xyt(xyt)
     features = model.features_for_region(z, "HF")
-    assert torch.allclose(features, z)
+    assert features.shape == (1, expected_dim)
+    if expected_dim == 3:
+        assert torch.allclose(features, z)
 
 
 def test_optional_5d_hf_local_features_use_length_axis_for_thin_fractures() -> None:
@@ -54,3 +57,24 @@ def test_optional_5d_hf_local_features_use_length_axis_for_thin_fractures() -> N
     features = model.features_for_region(z, "HF")
     assert features.shape[1] == 5
     assert torch.allclose(features[:, 1], torch.full((3,), 0.5, dtype=dtype), atol=1.0e-10)
+
+
+def test_base_correction_uses_attached_previous_time_field() -> None:
+    config = copy.deepcopy(load_config(Path(__file__).resolve().parents[1] / "config" / "default.yaml"))
+    config["model"]["constraint_mode"] = "ic_base_correction"
+    dtype = get_torch_dtype(config["runtime"]["dtype"])
+    model = PINNModel(config).to(dtype=dtype)
+
+    base_config = copy.deepcopy(config)
+    base_config["model"]["constraint_mode"] = "ic_hard"
+    base_model = PINNModel(base_config).to(dtype=dtype)
+    with torch.no_grad():
+        for subnet in base_model.subnets.values():
+            subnet.net[-1].bias[:] = torch.tensor([0.25, -0.10], dtype=dtype)
+    model.attach_base_model(base_model)
+
+    xyt = torch.tensor([[250.0, 75.0, 10.0], [300.0, 75.0, 100.0]], dtype=dtype)
+    z = model.normalize_xyt(xyt)
+    expected = base_model.forward_normalized(model._base_z(z))
+    pred = model(xyt)
+    assert torch.max(torch.abs(pred - expected)).item() < 1.0e-12

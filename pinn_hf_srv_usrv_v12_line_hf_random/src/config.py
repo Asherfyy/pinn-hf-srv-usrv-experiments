@@ -1,9 +1,4 @@
-"""配置读取与轻量校验。
-
-v3 项目刻意把几何、物理系数、采样数量和训练超参数集中到 YAML 中。这样做的原因
-不是为了“配置更花哨”，而是为了让简化模型的每个假设都能被看见：网络只吃
-`x_hat/y_hat/t_hat`，PDE 只用 `D/Fai` 有效扩散形式，界面连续 loss 被彻底移除。
-"""
+"""Configuration loading and lightweight validation for v12."""
 
 from __future__ import annotations
 
@@ -14,21 +9,21 @@ import yaml
 
 
 def load_config(config_path: str | Path) -> dict[str, Any]:
-    """读取 YAML 配置并执行最小必要校验。"""
+    """Load a YAML configuration and run minimal consistency checks."""
 
     path = Path(config_path)
     if not path.exists():
-        raise FileNotFoundError(f"配置文件不存在: {path}")
+        raise FileNotFoundError(f"Config file does not exist: {path}")
     with path.open("r", encoding="utf-8") as handle:
         config = yaml.safe_load(handle)
     if not isinstance(config, dict):
-        raise ValueError("配置文件必须解析为字典。")
+        raise ValueError("Config file must parse to a dictionary.")
     validate_config(config)
     return config
 
 
 def validate_config(config: dict[str, Any]) -> None:
-    """检查本项目不可放松的关键约束。"""
+    """Check the v12 assumptions that other modules rely on."""
 
     required = [
         "runtime",
@@ -44,16 +39,42 @@ def validate_config(config: dict[str, Any]) -> None:
     ]
     missing = [name for name in required if name not in config]
     if missing:
-        raise KeyError(f"配置缺少必要段: {missing}")
-    if str(config["runtime"].get("device", "cpu")).lower() != "cpu":
-        raise ValueError("v12 line-HF partitioned-MLP 项目强制 CPU-only，请将 runtime.device 设置为 cpu。")
-    if str(config["runtime"].get("dtype", "float64")).lower() != "float64":
-        raise ValueError("v12 默认并强制使用 float64，以减轻极端扩散系数下的数值噪声。")
+        raise KeyError(f"Config is missing required sections: {missing}")
+
+    runtime_cfg = config["runtime"]
+    if str(runtime_cfg.get("device", "cpu")).lower() != "cpu":
+        raise ValueError("v12 is CPU-only; set runtime.device to 'cpu'.")
+    if str(runtime_cfg.get("dtype", "float64")).lower() != "float64":
+        raise ValueError("v12 expects runtime.dtype='float64' for the current extreme coefficient scales.")
+
     model_cfg = config["model"]
     if int(model_cfg.get("input_dim", -1)) != 3:
-        raise ValueError("网络输入维度必须为 3，仅允许 x_hat/y_hat/t_hat。")
-    if str(model_cfg.get("constraint_mode", "")).lower() != "ic_hard":
-        raise ValueError("v12 只实现 ic_hard，不保留 direct/dirichlet_hard 分支。")
+        raise ValueError("model.input_dim must be 3 for x_hat/y_hat/t_hat.")
+    if int(model_cfg.get("subnet_input_dim", 3)) not in {3, 5}:
+        raise ValueError("model.subnet_input_dim must be 3 or 5.")
+    constraint_mode = str(model_cfg.get("constraint_mode", "")).lower()
+    if constraint_mode not in {"ic_hard", "ic_base_correction"}:
+        raise ValueError("v12 supports model.constraint_mode='ic_hard' or 'ic_base_correction'.")
+    if float(model_cfg.get("base_time_lag_days", 0.0)) < 0.0:
+        raise ValueError("model.base_time_lag_days must be non-negative.")
+    if float(model_cfg.get("correction_envelope_power", 1.0)) <= 0.0:
+        raise ValueError("model.correction_envelope_power must be positive.")
+
     physics_mode = str(config["physics"].get("mode", "")).lower()
     if physics_mode != "effective_diffusion":
-        raise ValueError("v12 只允许 physics.mode='effective_diffusion'。")
+        raise ValueError("v12 requires physics.mode='effective_diffusion'.")
+
+    sampler_cfg = config["sampler"]
+    sampling_mode = str(sampler_cfg.get("sampling_mode", "random")).lower()
+    if sampling_mode not in {"random", "uniform"}:
+        raise ValueError("sampler.sampling_mode must be 'random' or 'uniform'.")
+    time_sampling_mode = str(sampler_cfg.get("time_sampling_mode", sampling_mode)).lower()
+    if time_sampling_mode not in {"random", "uniform"}:
+        raise ValueError("sampler.time_sampling_mode must be 'random' or 'uniform'.")
+    time_pairing_mode = str(sampler_cfg.get("time_pairing_mode", "paired")).lower()
+    if time_pairing_mode not in {"paired", "cartesian"}:
+        raise ValueError("sampler.time_pairing_mode must be 'paired' or 'cartesian'.")
+    if time_pairing_mode == "cartesian":
+        for key in ["n_time_pde", "n_time_boundary", "n_time_interface", "n_time_link"]:
+            if int(sampler_cfg.get(key, sampler_cfg.get("n_time_collocation", 1))) <= 0:
+                raise ValueError(f"sampler.{key} must be positive when time_pairing_mode is 'cartesian'.")

@@ -24,15 +24,23 @@ regions.
 sampler:
   sampling_mode: "random"
   time_sampling_mode: "random"
+  time_pairing_mode: "cartesian"
+  n_time_pde: 16
 training:
   fixed_collocation_points: false
   resample_every: 1
   use_lbfgs: false
 ```
 
-`resample_every: 1` means every epoch uses a fresh collocation batch. Adam is
-the default optimizer because LBFGS repeatedly reevaluates one closure and is
-not a good default for per-epoch random collocation.
+`time_pairing_mode: "cartesian"` means each sampled spatial set is expanded
+against a smaller sampled time set. For example, `n_pde_srv: 64`,
+`n_near_hf_srv: 64`, `n_near_srv_usrv: 64`, and `n_time_pde: 16` produce
+`(64 + 64 + 32) * 16 = 2560` SRV PDE spacetime points with tensor shape
+`[2560, 3]`.
+
+`resample_every: 1` means every epoch uses a fresh collocation batch. If the
+cartesian batch is too expensive, reduce the spatial counts or the `n_time_*`
+counts before switching back to `time_pairing_mode: "paired"`.
 
 ## Model
 
@@ -43,17 +51,18 @@ The model remains a three-subnet PINN:
 - `USRV` subnet: trained in the outer reservoir region.
 
 The public input is still physical coordinate `[x, y, t]`. Internally it is
-normalized to `[x_hat, y_hat, t_hat]`. By default, each subnet receives exactly
-that 3D input:
+normalized to `[x_hat, y_hat, t_hat]`. The current default gives each subnet
+the legacy 5D local-feature input:
 
 ```yaml
 model:
-  subnet_input_dim: 3
+  subnet_input_dim: 5
 ```
 
-The older 5D local-feature mode `[x_local, y_local, x_hat, y_hat, t_hat]` is
-still supported by setting `subnet_input_dim: 5`, but it is no longer the v12
-default.
+In 5D mode the subnet input is `[x_local, y_local, x_hat, y_hat, t_hat]`. For
+line HF, the local coordinate across the thin fracture aperture is fixed at
+`0.5`, so the HF subnet mainly sees variation along the fracture length. The
+pure coordinate mode is still supported by setting `subnet_input_dim: 3`.
 
 The output is unchanged from v3:
 
@@ -62,6 +71,28 @@ The output is unchanged from v3:
 
 These are converted to physical pressure components `P12/P13`, and `Ptotal` is
 reported as their sum.
+
+The default output constraint now follows the v5 base-correction idea:
+
+```text
+u = u_base(x, y, t) + envelope(t)^p * correction_NN(x, y, t)
+envelope(t) = 1 - exp(-decay_rate * t)
+```
+
+```yaml
+model:
+  constraint_mode: "ic_base_correction"
+  base_checkpoint: null
+  base_time_lag_days: 1.0
+  correction_envelope_power: 1.0
+```
+
+With `base_checkpoint: null`, `u_base` is the uniform initial-pressure field
+`u=1`. If `base_checkpoint` points to a previous v12 checkpoint, that frozen
+model is evaluated at `max(t - base_time_lag_days, t_min)` and the active
+network learns only the correction relative to that baseline. Set
+`constraint_mode: "ic_hard"` to recover the older v12 form
+`u = 1 + envelope(t) * NN(x, y, t)`.
 
 ## Physics Loss
 

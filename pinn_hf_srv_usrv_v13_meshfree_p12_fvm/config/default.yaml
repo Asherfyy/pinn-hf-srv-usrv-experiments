@@ -1,0 +1,343 @@
+runtime:
+  seed: 2026
+  device: "cpu"
+  cpu_threads: 15
+  dtype: "float64"
+
+geometry:
+  x_min: 0.0
+  x_max: 360.0
+  y_min: 0.0
+  y_max: 150.0
+  srv_x_min: 180.0
+  srv_x_max: 360.0
+  srv_y_min: 37.5
+  srv_y_max: 112.5
+
+  hf_representation: "line"
+  line_region_tolerance_m: 1.0e-8
+  main_frac_x_min: 198.387
+  main_frac_x_max: 360.0
+  main_frac_y_min: 74.995
+  main_frac_y_max: 75.005
+  secondary_fractures:
+    - [333.0545, 333.0645, 46.077375, 103.922625]
+    - [306.1190, 306.1290, 46.077375, 103.922625]
+    - [279.1835, 279.1935, 46.077375, 103.922625]
+    - [252.2480, 252.2580, 46.077375, 103.922625]
+    - [225.3125, 225.3225, 46.077375, 103.922625]
+  dirichlet_segment:
+    x0: 360.0
+    y0: 74.995
+    x1: 360.0
+    y1: 75.005
+
+physics:
+  mode: "meshfree_p12_line_hf"
+  parameterization: "legacy_diffusion"
+  diffusivity_keys: ["D"]
+  seconds_per_day: 86400.0
+  transmissibility_scale: 1.0
+  Fai:
+    HF: 0.1
+    SRV: 0.05
+    USRV: 0.05
+  D:
+    HF: 1.0
+    SRV: 1.0e-7
+    USRV: 1.0e-9
+  permeability_mD:
+    HF: 30000.0
+    SRV: 10.0
+    USRV: 1.0
+  anisotropy_y: 1.0
+
+boundary:
+  P_t0: 25.0
+  P_out: 3.0
+  decay_rate: 0.018
+  pressure_normalization: "affine"
+
+sampler:
+  sampling_mode: "random"
+  time_sampling_mode: "random"
+  time_pairing_mode: "cartesian"
+  n_time_pde: 12
+  n_time_boundary: 12
+  n_time_interface: 16
+  n_time_link: 12
+  n_time_hf_segment_conservation: 8
+  n_time_hf_junction_flux: 12
+  n_time_symmetry: 12
+  n_pde_hf: 128
+  n_pde_srv: 80
+  n_pde_usrv: 80
+  n_near_hf_srv: 96
+  hf_srv_band_width_m: 0.15
+  n_near_hf_tip_srv: 160
+  hf_tip_band_radius_m: 3.0
+  n_near_srv_usrv: 160
+  srv_usrv_band_width_m: 2.0
+  n_conservation_srv: 80
+  n_conservation_usrv: 80
+  n_conservation_hf_tip_srv: 160
+  conservation_hf_tip_radius_m: 8.0
+  conservation_hf_tip_min_half_size_m: 0.25
+  conservation_hf_tip_max_half_size_m: 4.0
+  conservation_min_half_size_m: 1.0
+  conservation_max_half_size_m: 18.0
+  conservation_boundary_margin_m: 0.05
+  n_dirichlet: 64
+  n_neumann: 64
+  n_interface_hf_srv: 64
+  n_interface_srv_usrv: 192
+  n_hf_main_link: 128
+  n_hf_secondary_link: 96
+  n_hf_junction: 96
+  n_hf_junction_flux: 0
+  hf_junction_flux_offset_m: 0.05
+  n_hf_tip_neumann: 96
+  n_hf_leakoff_balance: 128
+  hf_leakoff_offset_m: 0.05
+  hf_leakoff_endpoint_margin_m: 0.05
+  n_hf_segment_conservation: 0
+  hf_segment_min_half_length_m: 0.5
+  hf_segment_max_half_length_m: 5.0
+  hf_segment_leakoff_offset_m: 0.05
+  hf_segment_endpoint_margin_m: 0.05
+  n_symmetry_hf: 96
+  n_symmetry_srv: 128
+  n_symmetry_usrv: 96
+  junction_offset_m: 0.05
+  eps_hf_srv: 0.05
+  eps_srv_usrv: 0.02
+  well_pde_exclusion_radius_m: 1.0
+  t_min: 0.0
+  t_max: 1000.0
+  time_strategy: "log1p_uniform"
+  time_anchor_days: [0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 100.0, 200.0, 500.0, 750.0, 1000.0]
+  time_anchor_fraction: 0.85
+  time_anchor_include_all_when_possible: true
+
+model:
+  input_dim: 3
+  subnet_input_dim: 3
+  output_dim: 1
+  hidden_layers: 4
+  hidden_units: 112
+  share_srv_usrv_subnet: true
+  region_hidden_layers:
+    HF: 4
+    SRV: 5
+    USRV: 5
+  region_hidden_units:
+    HF: 96
+    SRV: 128
+    USRV: 128
+  activation: "tanh"
+  constraint_mode: "ic_base_correction"
+  base_checkpoint: null
+  base_time_lag_days: 1.0
+  correction_envelope_power: 1.0
+  correction_scale: 0.05
+  correction_scale_by_region:
+    HF: 0.05
+    SRV: 0.05
+    USRV: 0.05
+  correction_activation: "tanh"
+  local_tip_expert:
+    enabled: false
+    radius_m: 10.0
+    scale: 0.005
+    gate_power: 1.0
+    hidden_layers: 3
+    hidden_units: 48
+  local_fracture_expert:
+    enabled: false
+    radius_m: 8.0
+    scale: 0.35
+    gate_power: 1.0
+    hidden_layers: 3
+    hidden_units: 64
+    matrix_only: true
+  enforce_maximum_principle: true
+  hard_dirichlet:
+    enabled: true
+    radius_m: 3.6
+    power: 2.0
+  analytic_base:
+    enabled: true
+    length_multiplier: 2.5
+    main_length_scale: 0.03
+    secondary_length_scale: 0.013
+    secondary_length_scale_gradient: 1.2
+    secondary_length_scale_center: 0.5
+    secondary_length_scale_min_factor: 0.05
+    min_length_m: 1.0e-6
+    smooth_max_tau: 0.02
+    endpoint_taper_enabled: false
+    endpoint_taper_m: 1.0
+    endpoint_taper_power: 2.0
+    aggregation: "probabilistic_union"
+    matrix_length_mode: "smooth_srv_usrv"
+    srv_usrv_blend_width_m: 20.0
+
+training:
+  epochs: 3000
+  learning_rate: 7.0e-4
+  freeze_base_for_tip_expert: false
+  freeze_base_for_local_experts: false
+  fixed_collocation_points: false
+  resample_every: 1
+  grad_clip_norm: 10.0
+  use_lbfgs: false
+  lbfgs_lr: 1.0
+  lbfgs_max_iter: 20
+  lbfgs_max_eval: 25
+  lbfgs_history_size: 50
+  lbfgs_tolerance_grad: 1.0e-9
+  lbfgs_tolerance_change: 1.0e-11
+  lbfgs_line_search_fn: "strong_wolfe"
+  print_every: 25
+  save_every: 100
+  pressure_range_lower: 0.0
+  pressure_range_upper: 1.0
+  lr_scheduler:
+    type: "cosine"
+    min_lr: 5.0e-5
+  validation:
+    enabled: true
+    every: 25
+    seed_offset: 10007
+    sampling_mode: "uniform"
+    time_sampling_mode: "uniform"
+    selection_metric: "diagnostic"
+    selection_weights:
+      pde_hf: 0.0
+      pde_srv: 1.0
+      pde_usrv: 1.0
+      gradient_enhanced_pde: 0.0
+      interface_pressure: 20.0
+      interface_pressure_srv_usrv: 120.0
+      interface_flux: 5.0
+      interface_flux_srv_usrv: 10.0
+      hf_main_link: 0.1
+      hf_secondary_link: 4.0
+      hf_junction: 8.0
+      hf_junction_flux: 0.0
+      hf_tip_neumann: 2.0
+      hf_leakoff_balance: 0.2
+      hf_segment_conservation: 0.0
+      symmetry: 5.0
+      pressure_range: 10.0
+      correction_regularization: 20.0
+      local_conservation: 1.0
+  early_stopping:
+    enabled: true
+    patience: 400
+    min_delta: 1.0e-4
+  causal_time_weighting:
+    enabled: true
+    bins: 12
+    epsilon: 2.0
+    log_time: true
+  gradient_enhanced_pde:
+    enabled: false
+    max_points_per_region: 96
+  adaptive_resampling:
+    enabled: true
+    every: 100
+    candidate_multiplier: 2
+    keep_hf: 48
+    keep_srv: 64
+    keep_usrv: 64
+    keep_conservation_srv: 16
+    keep_conservation_usrv: 16
+
+loss_weights:
+  pde: 5.0
+  pde_hf: 0.001
+  pde_srv: 1.0
+  pde_usrv: 1.0
+  gradient_enhanced_pde: 0.0
+  dirichlet: 40.0
+  neumann: 1.0
+  interface_pressure: 20.0
+  interface_pressure_srv_usrv: 120.0
+  interface_flux: 5.0
+  interface_flux_srv_usrv: 10.0
+  hf_main_link: 0.01
+  hf_secondary_link: 4.0
+  hf_junction: 8.0
+  hf_junction_flux: 0.0
+  hf_tip_neumann: 2.0
+  hf_leakoff_balance: 0.2
+  hf_segment_conservation: 0.0
+  symmetry: 5.0
+  pressure_range: 10.0
+  correction_regularization: 20.0
+  local_conservation: 1.0
+
+fvm_reference:
+  enabled: false
+  snapshot_name: "fvm_reference_snapshots.npz"
+  rebuild: false
+  comparison_only: true
+
+grid:
+  nx: 120
+  ny: 50
+  thickness_m: 1.0
+
+edfm:
+  max_dense_elements: 5000
+  matrix_fracture_distance_factor: 0.25
+  fracture_tangential_multiplier: 1.0
+
+well:
+  type: "bhp"
+  name: "producer"
+  x: 360.0
+  y: 75.0
+  constrain_connected_fracture: true
+  target_mode: "exponential"
+  initial_pressure_mpa: 25.0
+  final_pressure_mpa: 3.0
+  decay_rate_per_day: 0.018
+
+pressure:
+  components: ["P12"]
+  normalization: "affine"
+
+time_grid:
+  times_days: [0.0, 0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 100.0, 200.0, 500.0, 750.0, 1000.0]
+
+evaluation:
+  times: [0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 100.0, 200.0, 500.0, 750.0, 1000.0]
+  adaptive_plot:
+    coarse_nx: 181
+    coarse_ny: 91
+    srv_nx: 241
+    srv_ny: 161
+    hf_long_axis_points: 600
+    hf_short_axis_points: 1
+    hf_padding_m: 0.1
+    transition_band_points: 120
+  triangulation:
+    mask_cross_region: true
+    max_edge_length_global_m: 5.0
+    max_edge_length_srv_m: 2.0
+    max_edge_length_hf_m: 0.5
+
+direct_solver:
+  cg_rtol: 1.0e-9
+  cg_atol: 1.0e-10
+  cg_max_iter: 3000
+
+paths:
+  outputs: "outputs"
+  checkpoints: "outputs/checkpoints"
+  figures: "outputs/figures"
+  logs: "outputs/logs"
+  tables: "outputs/tables"
+  data: "data"

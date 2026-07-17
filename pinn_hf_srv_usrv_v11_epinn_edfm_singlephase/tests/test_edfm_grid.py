@@ -36,6 +36,9 @@ def test_edfm_connections_include_mm_mf_ff_and_valid_indices() -> None:
         assert connection.i != connection.j
         assert np.isfinite(connection.transmissibility)
         assert connection.transmissibility >= 0.0
+        assert len(connection.component_transmissibility) == 2
+        assert np.all(np.isfinite(connection.component_transmissibility))
+        assert np.all(np.asarray(connection.component_transmissibility) >= 0.0)
     assert grid.adjacency.shape == (grid.num_cells, grid.num_cells)
     assert np.allclose(grid.adjacency, grid.adjacency.T)
     assert grid.edge_index.shape[0] == 2
@@ -46,6 +49,26 @@ def test_edfm_connections_include_mm_mf_ff_and_valid_indices() -> None:
     assert np.all(grid.edge_weight > 0.0)
     assert grid.well_cell in set(grid.well_cells.tolist())
     assert grid.well_cells.size >= 2
+
+
+def test_legacy_diffusion_uses_fai_storage_and_component_diffusivity() -> None:
+    config = copy.deepcopy(load_config("config/default.yaml"))
+    config["grid"]["nx"] = 12
+    config["grid"]["ny"] = 10
+    geometry = ReservoirGeometry(config["geometry"])
+    grid = build_edfm_grid(geometry, config)
+
+    srv_mask = grid.cell_region[: grid.matrix_cell_count].astype(str) == "SRV"
+    usrv_mask = grid.cell_region[: grid.matrix_cell_count].astype(str) == "USRV"
+    hf_mask = grid.cell_region.astype(str) == "HF"
+    assert np.allclose(grid.cell_phi[: grid.matrix_cell_count][srv_mask], config["physics"]["Fai"]["SRV"])
+    assert np.allclose(grid.cell_phi[: grid.matrix_cell_count][usrv_mask], config["physics"]["Fai"]["USRV"])
+    assert np.allclose(grid.cell_phi[hf_mask], config["physics"]["Fai"]["HF"])
+    assert np.allclose(grid.cell_storage, grid.cell_phi * grid.cell_volume)
+
+    srv_cell = int(np.flatnonzero(srv_mask)[0])
+    assert np.allclose(grid.cell_conductivity[srv_cell], [config["physics"]["D1"]["SRV"], config["physics"]["D2"]["SRV"]])
+    assert grid.cell_conductivity[srv_cell, 1] < grid.cell_conductivity[srv_cell, 0]
 
 
 def test_large_grid_skips_dense_adjacency_but_keeps_sparse_edges() -> None:

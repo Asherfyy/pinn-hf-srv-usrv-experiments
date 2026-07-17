@@ -65,7 +65,7 @@ def main() -> None:
     elif args.mode == "plot":
         run_command(["-m", "src.plot_fields", "--config", str(CONFIG_PATH)], python_exe)
         run_command(["-m", "src.plot_sections", "--config", str(CONFIG_PATH)], python_exe)
-        run_command(["plot_loss_history.py"], python_exe)
+        run_command(["-m", "src.plot_loss_history", "--config", str(CONFIG_PATH)], python_exe)
     elif args.mode == "mesh":
         run_command(["-m", "src.plot_mesh", "--config", str(CONFIG_PATH)], python_exe)
     elif args.mode == "all":
@@ -74,7 +74,7 @@ def main() -> None:
         run_command(["-m", "src.evaluate", "--config", str(CONFIG_PATH)], python_exe)
         run_command(["-m", "src.plot_fields", "--config", str(CONFIG_PATH)], python_exe)
         run_command(["-m", "src.plot_sections", "--config", str(CONFIG_PATH)], python_exe)
-        run_command(["plot_loss_history.py"], python_exe)
+        run_command(["-m", "src.plot_loss_history", "--config", str(CONFIG_PATH)], python_exe)
 
 
 if __name__ == "__main__":

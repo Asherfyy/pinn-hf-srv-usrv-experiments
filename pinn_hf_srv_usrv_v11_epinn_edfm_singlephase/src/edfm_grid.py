@@ -55,6 +55,7 @@ class Connection:
     j: int
     transmissibility: float
     kind: str
+    component_transmissibility: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -63,7 +64,9 @@ class EdfmGrid:
     cell_region: np.ndarray
     cell_volume: np.ndarray
     cell_phi: np.ndarray
-    cell_perm_mD: np.ndarray
+    cell_representative_conductivity: np.ndarray
+    cell_conductivity: np.ndarray
+    cell_storage: np.ndarray
     matrix_cell_count: int
     fracture_segments: list[FractureSegment]
     connections: list[Connection]
@@ -94,7 +97,6 @@ def matrix_cell_id(i: int, j: int, nx: int) -> int:
 
 def build_edfm_grid(geometry: ReservoirGeometry, config: dict[str, Any]) -> EdfmGrid:
     grid_cfg = config["grid"]
-    rock_cfg = config["rock"]
     nx = int(grid_cfg["nx"])
     ny = int(grid_cfg["ny"])
     thickness = float(grid_cfg["thickness_m"])
@@ -103,23 +105,27 @@ def build_edfm_grid(geometry: ReservoirGeometry, config: dict[str, Any]) -> Edfm
     dx = float(x_edges[1] - x_edges[0])
     dy = float(y_edges[1] - y_edges[0])
 
-    cell_xy, cell_region, cell_volume, cell_phi, cell_perm = _build_matrix_cells(geometry, config, x_edges, y_edges, thickness)
+    component_count = len(config["pressure"]["components"])
+    cell_xy, cell_region, cell_volume, cell_phi, cell_repr_conductivity, cell_conductivity = _build_matrix_cells(geometry, config, x_edges, y_edges, thickness, component_count)
     matrix_count = int(cell_xy.shape[0])
     fracture_lines = [_fracture_line_from_rect(rect) for rect in geometry.hf_rects]
-    fracture_segments = _build_fracture_segments(fracture_lines, x_edges, y_edges, matrix_count, float(rock_cfg["porosity"]["HF"]), thickness)
+    fracture_segments = _build_fracture_segments(fracture_lines, x_edges, y_edges, matrix_count, _region_storage_phi(config, REGION_HF), thickness)
 
     if fracture_segments:
         frac_xy = np.asarray([segment.center for segment in fracture_segments], dtype=np.float64)
         frac_volume = np.asarray([segment.length * segment.aperture * thickness for segment in fracture_segments], dtype=np.float64)
-        frac_phi = np.full((len(fracture_segments),), float(rock_cfg["porosity"]["HF"]), dtype=np.float64)
-        frac_perm = np.full((len(fracture_segments),), float(rock_cfg["permeability_mD"]["HF"]), dtype=np.float64)
+        frac_phi = np.full((len(fracture_segments),), _region_storage_phi(config, REGION_HF), dtype=np.float64)
+        frac_repr_conductivity = np.full((len(fracture_segments),), _region_representative_conductivity(config, REGION_HF), dtype=np.float64)
+        frac_conductivity = np.tile(_region_component_conductivity(config, REGION_HF, component_count).reshape(1, -1), (len(fracture_segments), 1))
         cell_xy = np.vstack([cell_xy, frac_xy])
         cell_region = np.concatenate([cell_region, np.full((len(fracture_segments),), REGION_HF, dtype=object)])
         cell_volume = np.concatenate([cell_volume, frac_volume])
         cell_phi = np.concatenate([cell_phi, frac_phi])
-        cell_perm = np.concatenate([cell_perm, frac_perm])
+        cell_repr_conductivity = np.concatenate([cell_repr_conductivity, frac_repr_conductivity])
+        cell_conductivity = np.vstack([cell_conductivity, frac_conductivity])
 
-    connections = _build_connections(config, x_edges, y_edges, cell_perm, fracture_segments, matrix_count, nx, ny, dx, dy, thickness)
+    cell_storage = _cell_storage(cell_phi, cell_volume)
+    connections = _build_connections(config, x_edges, y_edges, cell_conductivity, fracture_segments, matrix_count, nx, ny, dx, dy, thickness)
     edge_index, edge_weight = _build_sparse_adjacency(cell_xy.shape[0], connections)
     adjacency = _build_adjacency_if_small(cell_xy.shape[0], connections, int(config["edfm"].get("max_dense_elements", 0)))
     well_cell = _nearest_matrix_cell(cell_xy[:matrix_count], float(config["well"]["x"]), float(config["well"]["y"]))
@@ -129,7 +135,9 @@ def build_edfm_grid(geometry: ReservoirGeometry, config: dict[str, Any]) -> Edfm
         cell_region=cell_region,
         cell_volume=cell_volume,
         cell_phi=cell_phi,
-        cell_perm_mD=cell_perm,
+        cell_representative_conductivity=cell_repr_conductivity,
+        cell_conductivity=cell_conductivity,
+        cell_storage=cell_storage,
         matrix_cell_count=matrix_count,
         fracture_segments=fracture_segments,
         connections=connections,
@@ -153,8 +161,8 @@ def _build_matrix_cells(
     x_edges: np.ndarray,
     y_edges: np.ndarray,
     thickness: float,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    rock = config["rock"]
+    component_count: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     xs = 0.5 * (x_edges[:-1] + x_edges[1:])
     ys = 0.5 * (y_edges[:-1] + y_edges[1:])
     xx, yy = np.meshgrid(xs, ys)
@@ -163,9 +171,12 @@ def _build_matrix_cells(
     region = np.where(in_srv, REGION_SRV, REGION_USRV).astype(object)
     area = float((x_edges[1] - x_edges[0]) * (y_edges[1] - y_edges[0]) * thickness)
     volume = np.full((xy.shape[0],), area, dtype=np.float64)
-    phi = np.full((xy.shape[0],), float(rock["porosity"]["matrix"]), dtype=np.float64)
-    perm = np.where(in_srv, float(rock["permeability_mD"]["SRV"]), float(rock["permeability_mD"]["USRV"])).astype(np.float64)
-    return xy, region, volume, phi, perm
+    phi = np.where(in_srv, _region_storage_phi(config, REGION_SRV), _region_storage_phi(config, REGION_USRV)).astype(np.float64)
+    representative_conductivity = np.where(in_srv, _region_representative_conductivity(config, REGION_SRV), _region_representative_conductivity(config, REGION_USRV)).astype(np.float64)
+    srv_conductivity = _region_component_conductivity(config, REGION_SRV, component_count)
+    usrv_conductivity = _region_component_conductivity(config, REGION_USRV, component_count)
+    conductivity = np.where(in_srv.reshape(-1, 1), srv_conductivity.reshape(1, -1), usrv_conductivity.reshape(1, -1)).astype(np.float64)
+    return xy, region, volume, phi, representative_conductivity, conductivity
 
 
 def _fracture_line_from_rect(rect: Rect) -> FractureLine:
@@ -213,7 +224,7 @@ def _build_connections(
     config: dict[str, Any],
     x_edges: np.ndarray,
     y_edges: np.ndarray,
-    perm: np.ndarray,
+    conductivity: np.ndarray,
     fracture_segments: list[FractureSegment],
     matrix_count: int,
     nx: int,
@@ -222,8 +233,7 @@ def _build_connections(
     dy: float,
     thickness: float,
 ) -> list[Connection]:
-    scale = float(config["physics"].get("transmissibility_scale", 1.0))
-    mu = float(config["fluid"]["viscosity_cP"])
+    scale = _transmissibility_scale(config)
     connections: list[Connection] = []
     for j in range(ny):
         for i in range(nx):
@@ -231,19 +241,19 @@ def _build_connections(
             if i + 1 < nx:
                 other = matrix_cell_id(i + 1, j, nx)
                 area = dy * thickness
-                connections.append(Connection(cell, other, scale * _harmonic(perm[cell], perm[other]) * area / (mu * dx), "mm"))
+                connections.append(_connection(cell, other, scale * _harmonic_vector(conductivity[cell], conductivity[other]) * area / dx, "mm"))
             if j + 1 < ny:
                 other = matrix_cell_id(i, j + 1, nx)
                 area = dx * thickness
-                connections.append(Connection(cell, other, scale * _harmonic(perm[cell], perm[other]) * area / (mu * dy), "mm"))
+                connections.append(_connection(cell, other, scale * _harmonic_vector(conductivity[cell], conductivity[other]) * area / dy, "mm"))
 
     distance = max(1.0e-12, float(config["edfm"].get("matrix_fracture_distance_factor", 0.25)) * min(dx, dy))
     for segment in fracture_segments:
         matrix_cells = _matrix_cells_for_point(segment.center[0], segment.center[1], x_edges, y_edges, nx, ny)
         for matrix_cell in matrix_cells:
             area = segment.length * thickness
-            t_mf = scale * _harmonic(perm[matrix_cell], perm[segment.cell_index]) * area / (mu * distance * len(matrix_cells))
-            connections.append(Connection(matrix_cell, segment.cell_index, t_mf, "mf"))
+            t_mf = scale * _harmonic_vector(conductivity[matrix_cell], conductivity[segment.cell_index]) * area / (distance * len(matrix_cells))
+            connections.append(_connection(matrix_cell, segment.cell_index, t_mf, "mf"))
 
     by_name: dict[str, list[FractureSegment]] = {}
     for segment in fracture_segments:
@@ -254,7 +264,7 @@ def _build_connections(
             distance_ff = max(1.0e-12, float(np.linalg.norm(second.center - first.center)))
             area = min(first.aperture, second.aperture) * thickness
             multiplier = float(config["edfm"].get("fracture_tangential_multiplier", 1.0))
-            connections.append(Connection(first.cell_index, second.cell_index, multiplier * scale * min(perm[first.cell_index], perm[second.cell_index]) * area / (mu * distance_ff), "ff"))
+            connections.append(_connection(first.cell_index, second.cell_index, multiplier * scale * np.minimum(conductivity[first.cell_index], conductivity[second.cell_index]) * area / distance_ff, "ff"))
 
     for idx, first in enumerate(fracture_segments):
         for second in fracture_segments[idx + 1 :]:
@@ -265,8 +275,55 @@ def _build_connections(
             distance_ff = max(1.0e-12, 0.5 * first.length + 0.5 * second.length)
             area = min(first.aperture, second.aperture) * thickness
             multiplier = float(config["edfm"].get("fracture_tangential_multiplier", 1.0))
-            connections.append(Connection(first.cell_index, second.cell_index, multiplier * scale * min(perm[first.cell_index], perm[second.cell_index]) * area / (mu * distance_ff), "ff"))
+            connections.append(_connection(first.cell_index, second.cell_index, multiplier * scale * np.minimum(conductivity[first.cell_index], conductivity[second.cell_index]) * area / distance_ff, "ff"))
     return [conn for conn in connections if np.isfinite(conn.transmissibility) and conn.transmissibility >= 0.0]
+
+
+def _legacy_diffusivity_keys(config: dict[str, Any], component_count: int) -> list[str]:
+    default = [f"D{idx + 1}" for idx in range(component_count)]
+    return [str(value) for value in config["physics"].get("diffusivity_keys", default)]
+
+
+def _region_storage_phi(config: dict[str, Any], region: str) -> float:
+    return float(config["physics"]["Fai"][region])
+
+
+def _region_component_conductivity(config: dict[str, Any], region: str, component_count: int) -> np.ndarray:
+    keys = _legacy_diffusivity_keys(config, component_count)
+    return np.asarray([float(config["physics"][key][region]) for key in keys], dtype=np.float64)
+
+
+def _region_representative_conductivity(config: dict[str, Any], region: str) -> float:
+    component_count = len(config["pressure"]["components"])
+    values = _region_component_conductivity(config, region, component_count)
+    return float(np.mean(values))
+
+
+def _cell_storage(cell_phi: np.ndarray, cell_volume: np.ndarray) -> np.ndarray:
+    return cell_phi * cell_volume
+
+
+def _transmissibility_scale(config: dict[str, Any]) -> float:
+    base = float(config["physics"].get("transmissibility_scale", 1.0))
+    return base * float(config["physics"]["seconds_per_day"])
+
+
+def _connection(i: int, j: int, component_transmissibility: np.ndarray, kind: str) -> Connection:
+    values = np.asarray(component_transmissibility, dtype=np.float64)
+    return Connection(int(i), int(j), float(np.mean(values)), kind, tuple(float(value) for value in values))
+
+
+def connection_transmissibility_matrix(connections: list[Connection], component_count: int) -> np.ndarray:
+    rows: list[np.ndarray] = []
+    for connection in connections:
+        if connection.component_transmissibility:
+            values = np.asarray(connection.component_transmissibility, dtype=np.float64)
+        else:
+            values = np.full((component_count,), float(connection.transmissibility), dtype=np.float64)
+        if values.size != component_count:
+            raise ValueError(f"Connection {connection.kind} {connection.i}->{connection.j} has {values.size} transmissibilities, expected {component_count}.")
+        rows.append(values)
+    return np.vstack(rows) if rows else np.empty((0, component_count), dtype=np.float64)
 
 
 def _matrix_cells_for_point(x: float, y: float, x_edges: np.ndarray, y_edges: np.ndarray, nx: int, ny: int) -> list[int]:
@@ -355,10 +412,13 @@ def _distance_point_to_segment(point: np.ndarray, start: np.ndarray, end: np.nda
     return float(np.linalg.norm(point - closest))
 
 
-def _harmonic(a: float, b: float) -> float:
-    if a <= 0.0 or b <= 0.0:
-        return 0.0
-    return 2.0 * float(a) * float(b) / (float(a) + float(b))
+def _harmonic_vector(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    a_arr = np.asarray(a, dtype=np.float64)
+    b_arr = np.asarray(b, dtype=np.float64)
+    out = np.zeros_like(a_arr, dtype=np.float64)
+    mask = (a_arr > 0.0) & (b_arr > 0.0)
+    out[mask] = 2.0 * a_arr[mask] * b_arr[mask] / (a_arr[mask] + b_arr[mask])
+    return out
 
 
 def _unique_sorted(values: list[float], tolerance: float = 1.0e-10) -> list[float]:

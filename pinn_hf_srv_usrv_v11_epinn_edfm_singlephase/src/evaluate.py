@@ -16,15 +16,33 @@ from .utils import ensure_output_dirs
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate diagnostics for v11 snapshots.")
     parser.add_argument("--config", type=str, default="config/default.yaml")
+    parser.add_argument("--snapshot-file", type=str, default=None)
     return parser.parse_args()
 
 
-def load_snapshots(config: dict[str, Any]) -> dict[str, np.ndarray]:
-    path = Path(config["paths"]["outputs"]) / "snapshots.npz"
+def load_snapshots(config: dict[str, Any], snapshot_file: str | Path | None = None) -> dict[str, np.ndarray]:
+    path = resolve_snapshot_file(config, snapshot_file)
     if not path.exists():
         raise FileNotFoundError(f"Snapshot file does not exist: {path}. Run training first.")
-    with np.load(path) as data:
+    with np.load(path, allow_pickle=True) as data:
         return {key: data[key] for key in data.files}
+
+
+def resolve_snapshot_file(config: dict[str, Any], snapshot_file: str | Path | None = None) -> Path:
+    if snapshot_file is None:
+        return Path(config["paths"]["outputs"]) / "snapshots.npz"
+    raw_path = Path(snapshot_file)
+    if raw_path.is_absolute():
+        return raw_path
+    candidates = [
+        Path.cwd() / raw_path,
+        Path(config["paths"]["outputs"]) / raw_path,
+        Path(config["paths"]["outputs"]) / "pod" / raw_path,
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
 
 
 def compute_diagnostics(snapshots: dict[str, np.ndarray]) -> pd.DataFrame:
@@ -73,8 +91,12 @@ def main() -> None:
     args = parse_args()
     config = load_config(args.config)
     ensure_output_dirs(config)
-    diagnostics = compute_diagnostics(load_snapshots(config))
-    out_path = Path(config["paths"]["tables"]) / "diagnostics.csv"
+    diagnostics = compute_diagnostics(load_snapshots(config, args.snapshot_file))
+    if args.snapshot_file is None:
+        out_path = Path(config["paths"]["tables"]) / "diagnostics.csv"
+    else:
+        out_path = Path(config["paths"]["tables"]) / "pod" / "diagnostics.csv"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
     diagnostics.to_csv(out_path, index=False)
     print(f"Diagnostics saved: {out_path}")
 

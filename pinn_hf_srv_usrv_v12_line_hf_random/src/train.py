@@ -18,6 +18,7 @@ from typing import Any
 import torch
 from tqdm import tqdm
 
+from .base_model import attach_base_model_from_config
 from .config import load_config
 from .geometry import ReservoirGeometry
 from .losses import compute_total_loss
@@ -163,6 +164,7 @@ def main() -> None:
     sampler = ReservoirSampler(geometry, config["sampler"], device, dtype, seed=int(runtime["seed"]))
     samples = sampler.sample_all()
     model = PINNModel(config).to(device=device, dtype=dtype)
+    attach_base_model_from_config(model, config, device, dtype, args.config)
     optimizer = build_optimizer(model, config["training"])
     # 恒等 scheduler 让 checkpoint 结构完整，同时不改变学习率策略。
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda _epoch: 1.0)
@@ -182,7 +184,9 @@ def main() -> None:
     print(
         f"collocation: fixed={fixed} resample_every={resample_every} "
         f"sampling_mode={config['sampler'].get('sampling_mode')} "
-        f"time_sampling_mode={config['sampler'].get('time_sampling_mode', config['sampler'].get('sampling_mode'))}"
+        f"time_sampling_mode={config['sampler'].get('time_sampling_mode', config['sampler'].get('sampling_mode'))} "
+        f"time_pairing_mode={config['sampler'].get('time_pairing_mode', 'paired')} "
+        f"constraint_mode={config['model'].get('constraint_mode')}"
     )
 
     if epochs <= start_epoch:
